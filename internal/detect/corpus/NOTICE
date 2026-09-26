@@ -1,0 +1,6 @@
+libsmali.jsonl and libinfo.jsonl are EUPL-1.2, copyright Katastima Authors.
+Source: https://codeberg.org/Katastima/apkscanner-data
+
+exodus.json is the εxodus tracker list.
+The database is ODbL 1.0. The contents are DbCL 1.0.
+Source: https://reports.exodus-privacy.eu.org/api/trackers
