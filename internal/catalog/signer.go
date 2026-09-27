@@ -2,12 +2,8 @@ package catalog
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -16,6 +12,9 @@ import (
 )
 
 const fixtureSK = "0000000000000000000000000000000000000000000000000000000000000001"
+
+// localBunkerClientKey matches hotbox/internal/bunker.localClientKey.
+const localBunkerClientKey = "0000000000000000000000000000000000000000000000000000000000000002"
 
 // Signer signs catalog manifests. A local key signs directly. A bunker URL
 // signs through NIP-46, including a loopback ws:// relay.
@@ -85,11 +84,7 @@ func openBunker(ctx context.Context, bunkerURL string) (Signer, error) {
 	if err != nil {
 		return Signer{}, err
 	}
-	clientKey, err := bunkerClientKey(target)
-	if err != nil {
-		return Signer{}, err
-	}
-	remote, err := nip46.ConnectBunker(ctx, clientKey, bunkerURL, nil, func(string) {})
+	remote, err := nip46.ConnectBunker(ctx, localBunkerClientKey, bunkerURL, nil, func(string) {})
 	if err != nil {
 		return Signer{}, fmt.Errorf("bunker: %w", err)
 	}
@@ -124,30 +119,4 @@ func bunkerTarget(bunkerURL string) (string, []string, error) {
 		}
 	}
 	return parsed.Host, relays, nil
-}
-
-func bunkerClientKey(target string) (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("bunker: %w", err)
-	}
-	path := filepath.Join(configDir, "steroid", "bunker-keys", target+".key")
-	if data, err := os.ReadFile(path); err == nil {
-		key := strings.TrimSpace(string(data))
-		if nostr.IsValid32ByteHex(key) {
-			return key, nil
-		}
-	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("bunker: %w", err)
-	}
-	key := hex.EncodeToString(raw[:])
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", fmt.Errorf("bunker: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
-		return "", fmt.Errorf("bunker: %w", err)
-	}
-	return key, nil
 }
