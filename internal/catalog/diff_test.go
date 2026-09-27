@@ -3,6 +3,7 @@ package catalog
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,13 +51,42 @@ func TestDiffDropsAppAndKeepsReplacement(t *testing.T) {
 	}
 }
 
+func TestKind0FollowsReplaceableKey(t *testing.T) {
+	pubkey := strings.Repeat("ab", 32)
+	older := nostr.Event{ID: "b", Kind: 0, PubKey: pubkey, CreatedAt: 1, Content: `{"picture":"https://cdn.example/a.png"}`}
+	newer := nostr.Event{ID: "a", Kind: 0, PubKey: pubkey, CreatedAt: 2, Content: `{"picture":"https://cdn.example/b.png"}`}
+	app := nostr.Event{ID: "app", Kind: 32267, PubKey: pubkey, CreatedAt: 1, Tags: nostr.Tags{{"d", "com.example"}}}
+	next := Resolve([]nostr.Event{older, newer, app}, "")
+	if len(next.Profiles) != 1 || next.Profiles[0].Event.ID != "a" || next.Profiles[0].Picture != "https://cdn.example/b.png" {
+		t.Fatalf("%+v", next.Profiles)
+	}
+	diff := Compare(State{Profiles: []Profile{{Pubkey: pubkey, Event: newer}}}, next)
+	for _, event := range diff.Events {
+		if event.Kind == 0 {
+			t.Fatalf("unchanged kind 0 in diff: %+v", event)
+		}
+	}
+	release := nostr.Event{ID: "rel-2", Kind: 30063, PubKey: pubkey, CreatedAt: 3, Tags: nostr.Tags{{"d", "com.example@2"}, {"i", "com.example"}}}
+	withRelease := next
+	withRelease.Listings = []Listing{{AppID: "com.example", App: app, Release: release}}
+	diff = Compare(State{Profiles: next.Profiles, Listings: []Listing{{AppID: "com.example", App: app, Release: nostr.Event{ID: "rel-1", Kind: 30063}}}}, withRelease)
+	for _, event := range diff.Events {
+		if event.Kind == 0 {
+			t.Fatalf("kind 0 repeated for a release: %+v", event)
+		}
+	}
+	if len(diff.Events) != 1 || diff.Events[0].ID != "rel-2" {
+		t.Fatalf("events %+v", diff.Events)
+	}
+}
+
 func TestBundleCopiesArtifactDir(t *testing.T) {
 	data := t.TempDir()
 	dir := AppDir(data, "com.example.maps")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "analysis"), []byte("apk ab\n----\nsum\n----\n\n----\n\n----\n\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "about"), []byte("sum\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "vector"), bytes.Repeat([]byte{1}, 768), 0o644); err != nil {
@@ -82,8 +112,9 @@ func TestBundleCopiesArtifactDir(t *testing.T) {
 	files := tarFiles(t, body)
 	for _, want := range []string{
 		"manifest.json",
+		"index",
 		"diff.jsonl",
-		"com.example.maps/analysis",
+		"com.example.maps/about",
 		"com.example.maps/vector",
 		avatar,
 	} {
@@ -93,6 +124,42 @@ func TestBundleCopiesArtifactDir(t *testing.T) {
 	}
 	if bytes.Contains(files["manifest.json"], []byte(`"r"`)) {
 		t.Fatalf("manifest contains a relay URL: %s", files["manifest.json"])
+	}
+}
+
+func TestLargeBundleManifestFitsBunker(t *testing.T) {
+	data := t.TempDir()
+	const apps = 4080
+	ids := make([]string, apps)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("app.%04d", i)
+		dir := AppDir(data, ids[i])
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "about"), []byte("sum\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	signer, err := ParseSigner("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := BuildBundle(t.Context(), data, 0, 1, 10, Diff{Apps: ids}, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := tarFiles(t, body)
+	manifest := files["manifest.json"]
+	if len(manifest) > 8<<10 {
+		t.Fatalf("manifest is %d bytes", len(manifest))
+	}
+	if bytes.Count(manifest, []byte(`"file"`)) != 1 {
+		t.Fatalf("manifest tags: %s", manifest)
+	}
+	lines := bytes.Count(files["index"], []byte("\n"))
+	if lines != apps {
+		t.Fatalf("index lines %d", lines)
 	}
 }
 

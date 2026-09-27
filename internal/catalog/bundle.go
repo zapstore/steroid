@@ -23,7 +23,7 @@ func BuildBundle(ctx context.Context, data string, from, to, sealedAt int64, dif
 			return nil, fmt.Errorf("app id %q", appID)
 		}
 		dir := AppDir(data, appID)
-		for _, name := range []string{"analysis", "vector", "icon.webp"} {
+		for _, name := range []string{"about", "security", "facts", "vector", "icon.webp"} {
 			body, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				if os.IsNotExist(err) {
