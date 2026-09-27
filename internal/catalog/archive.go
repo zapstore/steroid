@@ -34,7 +34,7 @@ func WriteSnap(path string, events []nostr.Event) error {
 	if err != nil {
 		return err
 	}
-	body, err := pack(context.Background(), []member{{Name: "events.jsonl", Data: raw}}, 0, 0, 0, nil)
+	body, err := packUnsigned([]member{{Name: "events.jsonl", Data: raw}})
 	if err != nil {
 		return err
 	}
@@ -92,20 +92,35 @@ func unmarshalEvents(raw []byte) ([]nostr.Event, error) {
 	return out, nil
 }
 
+func packUnsigned(members []member) ([]byte, error) {
+	slices.SortFunc(members, func(a, b member) int { return strings.Compare(a.Name, b.Name) })
+	return writeArchive(members)
+}
+
 func pack(ctx context.Context, members []member, from, to, sealedAt int64, signer *Signer) ([]byte, error) {
 	slices.SortFunc(members, func(a, b member) int { return strings.Compare(a.Name, b.Name) })
 	all := members
 	if signer != nil {
-		manifest, err := signManifest(ctx, from, to, sealedAt, members, *signer)
+		// One file tag per member does not fit in a NIP-46 request once a seal
+		// covers thousands of apps. NIP-44 plaintext maxes at 64KB. The signed
+		// event tags only the index; the index lists every other member hash.
+		index := fileIndex(members)
+		manifest, err := signManifest(ctx, from, to, sealedAt, []member{index}, *signer)
 		if err != nil {
 			return nil, err
 		}
-		all = append([]member{{Name: "manifest.json", Data: manifest}}, members...)
+		all = append(members, index)
+		slices.SortFunc(all, func(a, b member) int { return strings.Compare(a.Name, b.Name) })
+		all = append([]member{{Name: "manifest.json", Data: manifest}}, all...)
 	}
+	return writeArchive(all)
+}
+
+func writeArchive(members []member) ([]byte, error) {
 	var tarBuf bytes.Buffer
 	tw := tar.NewWriter(&tarBuf)
 	zero := time.Unix(0, 0).UTC()
-	for _, m := range all {
+	for _, m := range members {
 		hdr := &tar.Header{
 			Typeflag: tar.TypeReg,
 			Name:     m.Name,
@@ -169,6 +184,15 @@ func unpack(path string) (map[string][]byte, error) {
 		}
 		out[hdr.Name] = buf
 	}
+}
+
+func fileIndex(members []member) member {
+	var buf bytes.Buffer
+	for _, m := range members {
+		sum := sha256.Sum256(m.Data)
+		fmt.Fprintf(&buf, "%x %s\n", sum, m.Name)
+	}
+	return member{Name: "index", Data: buf.Bytes()}
 }
 
 func signManifest(ctx context.Context, from, to, sealedAt int64, members []member, signer Signer) ([]byte, error) {
