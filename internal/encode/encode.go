@@ -102,6 +102,8 @@ func startORT(lib string) error {
 }
 
 func infer(model string, ids, mask, types []int64) ([]float32, error) {
+	ortMu.Lock()
+	defer ortMu.Unlock()
 	n := int64(len(ids))
 	shape := ort.NewShape(1, n)
 	idT, err := ort.NewTensor(shape, ids)

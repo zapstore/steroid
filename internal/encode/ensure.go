@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -20,6 +21,8 @@ const (
 	hfRoot   = "https://huggingface.co/MongoDB/mdbr-leaf-ir/resolve/" + modelRev + "/"
 	ortVer   = "1.23.2"
 )
+
+var fetchClient = &http.Client{Timeout: 5 * time.Minute}
 
 type pinnedFile struct {
 	name string
@@ -90,8 +93,8 @@ func downloadFile(ctx context.Context, rawURL, dest string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "zapstore-relay")
-	res, err := http.DefaultClient.Do(req)
+	req.Header.Set("User-Agent", "steroid")
+	res, err := fetchClient.Do(req)
 	if err != nil {
 		return err
 	}
