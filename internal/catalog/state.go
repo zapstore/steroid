@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -20,6 +21,14 @@ type State struct {
 	Listings []Listing
 	Proofs   []Proof
 	Stacks   []Stack
+	Profiles []Profile
+}
+
+// Profile is the current kind 0 event for one pubkey.
+type Profile struct {
+	Pubkey  string
+	Picture string
+	Event   nostr.Event
 }
 
 // Listing is a complete main-channel Android relation signed by one pubkey.
@@ -107,6 +116,9 @@ func (s State) Events() []nostr.Event {
 	for _, stack := range s.Stacks {
 		out = append(out, stack.Event)
 	}
+	for _, profile := range s.Profiles {
+		out = append(out, profile.Event)
+	}
 	return out
 }
 
@@ -151,6 +163,13 @@ func (s State) canonicalBytes() []byte {
 	for _, stack := range stacks {
 		fmt.Fprintf(&b, "S\t%d\t%s\t%s\t%s\n", events.KindStack, stack.Pubkey, stack.D, stack.Event.ID)
 	}
+	profiles := append([]Profile(nil), s.Profiles...)
+	slices.SortFunc(profiles, func(a, b Profile) int {
+		return strings.Compare(a.Pubkey, b.Pubkey)
+	})
+	for _, profile := range profiles {
+		fmt.Fprintf(&b, "K\t%d\t%s\t%s\n", events.KindProfile, profile.Pubkey, profile.Event.ID)
+	}
 	return []byte(b.String())
 }
 
@@ -162,11 +181,14 @@ func Resolve(snapshot []nostr.Event, stackPubkey string) State {
 
 	for _, event := range snapshot {
 		switch event.Kind {
-		case events.KindApp, events.KindRelease, events.KindIdentityProof, events.KindStack:
+		case events.KindApp, events.KindRelease, events.KindIdentityProof, events.KindStack, events.KindProfile:
 			if event.Kind == events.KindStack && event.PubKey != stackPubkey {
 				continue
 			}
 			d, ok := events.Find(event.Tags, "d")
+			if event.Kind == events.KindProfile {
+				d, ok = "", event.PubKey != ""
+			}
 			if !ok {
 				continue
 			}
@@ -186,6 +208,7 @@ func Resolve(snapshot []nostr.Event, stackPubkey string) State {
 	proofs := make([]Proof, 0, len(current))
 	stacks := make([]Stack, 0)
 	var apps []nostr.Event
+	var profiles []Profile
 	for _, event := range current {
 		switch event.Kind {
 		case events.KindApp:
@@ -209,6 +232,12 @@ func Resolve(snapshot []nostr.Event, stackPubkey string) State {
 			}
 			d, _ := events.Find(event.Tags, "d")
 			stacks = append(stacks, Stack{Pubkey: event.PubKey, D: d, Event: event})
+		case events.KindProfile:
+			profiles = append(profiles, Profile{
+				Pubkey:  event.PubKey,
+				Picture: pictureURL(event),
+				Event:   event,
+			})
 		}
 	}
 
@@ -246,7 +275,20 @@ func Resolve(snapshot []nostr.Event, stackPubkey string) State {
 		}
 		return strings.Compare(a.D, b.D)
 	})
-	return State{Listings: listings, Proofs: proofs, Stacks: stacks}
+	slices.SortFunc(profiles, func(a, b Profile) int {
+		return strings.Compare(a.Pubkey, b.Pubkey)
+	})
+	return State{Listings: listings, Proofs: proofs, Stacks: stacks, Profiles: profiles}
+}
+
+func pictureURL(event nostr.Event) string {
+	var body struct {
+		Picture string `json:"picture"`
+	}
+	if json.Valid([]byte(event.Content)) {
+		_ = json.Unmarshal([]byte(event.Content), &body)
+	}
+	return strings.TrimSpace(body.Picture)
 }
 
 type listingCandidate struct {
@@ -259,7 +301,10 @@ func ownerKey(pubkey, appID string) string {
 	return pubkey + "\x00" + appID
 }
 
-const androidAPKMIME = "application/vnd.android.package-archive"
+const (
+	androidAPKMIME = "application/vnd.android.package-archive"
+	preferredABI   = "android-arm64-v8a"
+)
 
 // isAndroidAPK reports whether the asset is an Android APK, by MIME type when
 // present and otherwise by its platform identifiers.
