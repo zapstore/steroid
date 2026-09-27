@@ -3,4 +3,5 @@ go.work.sum
 debug.txt
 dist/
 .tools/
+testdata/
 .env
