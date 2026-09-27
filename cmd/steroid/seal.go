@@ -15,7 +15,8 @@ import (
 
 func seal(args []string) int {
 	fs := flag.NewFlagSet("seal", flag.ExitOnError)
-	skipAnalysis := fs.Bool("skip-analysis", false, "skip the APK scan, repository, and LLM")
+	filter := fs.String("filter", "", "substring of the app ID; only those apps are enriched")
+	noEnrich := fs.Bool("no-enrich", false, "publish without enriching; ship artifact files only when the cache apk matches the listing")
 	fs.Usage = func() {
 		usage()
 		fs.PrintDefaults()
@@ -34,9 +35,15 @@ func seal(args []string) int {
 		env.log.Error("seal", "error", fmt.Errorf("RELAY_DB or SYSTEM_DIRECTORY_PATH is required"))
 		return 1
 	}
-	n, err := catalog.Seal(ctx, env.data, env.dbPath, env.model, env.signer, run.Options{SkipAnalysis: *skipAnalysis}, env.log)
+	if !*noEnrich {
+		if _, err := run.ModelConfig(); err != nil {
+			env.log.Error("seal", "error", err)
+			return 1
+		}
+	}
+	n, err := catalog.Seal(ctx, env.data, env.dbPath, env.model, env.signer, *filter, *noEnrich)
 	if err != nil {
-		env.log.Error("seal", "error", err)
+		env.log.Error("seal", "error", err, "relay_db", env.dbPath, "data", env.data)
 		return 1
 	}
 	env.log.Info("seal", "epoch", n)

@@ -15,6 +15,13 @@ func TestSecurityLeadsWithWarning(t *testing.T) {
 	if got != "⚠️ Posts contacts." {
 		t.Fatalf("%q", got)
 	}
+	file := SecurityText("A calculator can receive SMS.", []Warning{{Text: "Posts contacts."}})
+	if file != "A calculator can receive SMS.\n⚠️ Posts contacts." {
+		t.Fatalf("%q", file)
+	}
+	if SecurityText("no-change", []Warning{{Text: "Posts contacts."}}) != "no-change" {
+		t.Fatal("sentinel")
+	}
 	if strings.Contains(got, "lib/a.kt") || strings.Contains(got, "Works offline") {
 		t.Fatalf("evidence or facts leaked %q", got)
 	}

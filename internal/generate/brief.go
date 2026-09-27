@@ -96,6 +96,23 @@ func AllowOpenSource(f Facts, license string, matched bool) Facts {
 	return f
 }
 
+// SecurityText is the security file: the paragraph, then one warning line each.
+// A no-change paragraph is left as the sentinel so the stored file stays.
+func SecurityText(paragraph string, warnings []Warning) string {
+	paragraph = strings.TrimSpace(paragraph)
+	if strings.EqualFold(paragraph, "no-change") {
+		return paragraph
+	}
+	lines := WarningsText(warnings)
+	if paragraph == "" {
+		return lines
+	}
+	if lines == "" {
+		return paragraph
+	}
+	return paragraph + "\n" + lines
+}
+
 // WarningsText is the warning list. Each line leads with a warning mark.
 func WarningsText(warnings []Warning) string {
 	var b strings.Builder

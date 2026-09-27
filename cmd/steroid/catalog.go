@@ -19,24 +19,32 @@ type catalogEnv struct {
 	log    *slog.Logger
 }
 
-func loadCatalogEnv(ctx context.Context) (catalogEnv, error) {
+func prepareEnv() (catalogEnv, error) {
 	if err := config.LoadDotEnv(); err != nil {
 		return catalogEnv{}, err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	data, dbPath := dataPaths()
-	signer, err := catalog.OpenSigner(ctx, os.Getenv("SIGN_WITH"))
-	if err != nil {
-		return catalogEnv{}, err
-	}
 	return catalogEnv{
 		data:   data,
 		addr:   env("STEROID_ADDRESS", "localhost:3339"),
 		dbPath: dbPath,
 		model:  env("LEAF_MODEL_DIR", ".tools/leaf-ir-v1"),
-		signer: signer,
 		log:    log,
 	}, nil
+}
+
+func loadCatalogEnv(ctx context.Context) (catalogEnv, error) {
+	env, err := prepareEnv()
+	if err != nil {
+		return catalogEnv{}, err
+	}
+	signer, err := catalog.OpenSigner(ctx, os.Getenv("SIGN_WITH"))
+	if err != nil {
+		return catalogEnv{}, err
+	}
+	env.signer = signer
+	return env, nil
 }
 
 func dataPaths() (data, dbPath string) {

@@ -4,7 +4,6 @@ package review
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -15,7 +14,7 @@ import (
 )
 
 // Run sends the source digest once and returns the overview plus checked warnings.
-func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, current string, log *slog.Logger) (generate.Result, error) {
+func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, current string) (generate.Result, error) {
 	if tree == nil || tree.Dir == "" {
 		return generate.Result{}, fmt.Errorf("source tree required")
 	}
@@ -25,10 +24,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 	if client == nil {
 		return generate.Result{}, fmt.Errorf("http client required")
 	}
-	if log == nil {
-		log = slog.Default()
-	}
-	digest := source.Read(tree, hasAPK(sheet))
+	digest := source.Read(tree, scan.HasAPK(sheet), source.Uses(sheet))
 	if strings.TrimSpace(digest.Text) == "" {
 		return generate.Result{}, fmt.Errorf("empty source digest")
 	}
@@ -43,7 +39,6 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 			last = err
 			continue
 		}
-		log.Info("review", "model", model, "warnings", len(out.Warnings))
 		return out, nil
 	}
 	if last != nil {
@@ -56,17 +51,8 @@ type reply struct {
 	About    string             `json:"about"`
 	Security string             `json:"security"`
 	Facts    generate.Facts     `json:"facts"`
-	Why      map[string]string  `json:"why"`
+	Reason   map[string]string  `json:"reason"`
 	Warnings []generate.Warning `json:"warnings"`
-}
-
-func hasAPK(rows []scan.Row) bool {
-	for _, row := range rows {
-		if row.Basis == "apk" {
-			return true
-		}
-	}
-	return false
 }
 
 func once(ctx context.Context, cfg config.Config, client *http.Client, model string, app generate.App, sheet []scan.Row, digest, current string) (generate.Result, error) {
@@ -87,7 +73,7 @@ func once(ctx context.Context, cfg config.Config, client *http.Client, model str
 		About:         about,
 		Security:      strings.TrimSpace(got.Security),
 		Facts:         facts,
-		Why:           got.Why,
+		Reason:        got.Reason,
 		Warnings:      warnings,
 		Summary:       about,
 		ProviderModel: model,

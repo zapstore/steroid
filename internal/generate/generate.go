@@ -18,6 +18,7 @@ import (
 
 const (
 	maxCellBytes    = 256
+	maxDescription  = 12000
 	completeTimeout = time.Minute
 )
 
@@ -34,7 +35,7 @@ type Result struct {
 	About         string            `json:"about,omitempty"`
 	Security      string            `json:"security,omitempty"`
 	Facts         Facts             `json:"facts,omitempty"`
-	Why           map[string]string `json:"why,omitempty"`
+	Reason        map[string]string `json:"reason,omitempty"`
 	Warnings      []Warning         `json:"warnings,omitempty"`
 	ProviderModel string            `json:"provider_model,omitempty"`
 }
@@ -52,7 +53,7 @@ type App struct {
 }
 
 // Input is the app text, the scan rows, and optional source text.
-// Current is the analysis file already stored for this app.
+// Current is the stored about and security text, labeled by Prior.
 type Input struct {
 	App     App
 	Source  string
@@ -78,7 +79,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, in Input) 
 		Security:      notes.Security,
 		Warnings:      notes.Warnings,
 		Facts:         notes.Facts,
-		Why:           notes.Why,
+		Reason:        notes.Reason,
 		ProviderModel: notes.ProviderModel,
 	}, nil
 }
@@ -89,7 +90,7 @@ type Notes struct {
 	About         string
 	Security      string
 	Facts         Facts
-	Why           map[string]string
+	Reason        map[string]string
 	Warnings      []Warning
 	ProviderModel string
 }
@@ -112,7 +113,7 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 			About    string            `json:"about"`
 			Security string            `json:"security"`
 			Facts    Facts             `json:"facts"`
-			Why      map[string]string `json:"why"`
+			Reason   map[string]string `json:"reason"`
 			Warnings []Warning         `json:"warnings"`
 		}
 		if err := complete(ctx, cfg, client, model, Prompt, WithCurrent(Record(app, sheet, source), current), &out); err != nil {
@@ -130,7 +131,7 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 			About:         about,
 			Security:      strings.TrimSpace(out.Security),
 			Facts:         facts,
-			Why:           out.Why,
+			Reason:        out.Reason,
 			Warnings:      warnings,
 			Summary:       about,
 			ProviderModel: model,
@@ -151,7 +152,7 @@ func Record(app App, sheet []scan.Row, source string) string {
 	writeLine(&b, "Purpose", app.Summary)
 	if c := strings.TrimSpace(app.Content); c != "" {
 		b.WriteString("Description: ")
-		b.WriteString(clipTo(c, 1500))
+		b.WriteString(clipTo(c, maxDescription))
 		b.WriteByte('\n')
 	}
 	if len(app.Tags) > 0 {
@@ -174,13 +175,38 @@ func Record(app App, sheet []scan.Row, source string) string {
 	return b.String()
 }
 
-// WithCurrent appends the stored analysis so the model can check it.
+// Prior labels the stored about and security notes for the user message.
+// An empty note is left out. Both empty returns an empty string.
+func Prior(about, security string) string {
+	about = strings.TrimSpace(about)
+	security = strings.TrimSpace(security)
+	if about == "" && security == "" {
+		return ""
+	}
+	var b strings.Builder
+	if about != "" {
+		b.WriteString("About:\n")
+		b.WriteString(about)
+		b.WriteByte('\n')
+	}
+	if security != "" {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("Security:\n")
+		b.WriteString(security)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// WithCurrent appends the stored about and security text so the model can check it.
 func WithCurrent(body, current string) string {
 	current = strings.TrimSpace(current)
 	if current == "" {
 		return body
 	}
-	return body + "\nCurrent analysis (untrusted):\n" + current + "\n"
+	return body + "\nCurrent store text (untrusted):\n" + current + "\n"
 }
 
 func writeLine(b *strings.Builder, label, value string) {
@@ -245,15 +271,6 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 	if err != nil {
 		return "", err
 	}
-	var sent strings.Builder
-	for _, m := range msgs {
-		sent.WriteString("### ")
-		sent.WriteString(m.Role)
-		sent.WriteByte('\n')
-		sent.WriteString(m.Content)
-		sent.WriteString("\n\n")
-	}
-	debugSection(cfg.Debug, "llm request "+model, sent.String())
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.CompletionsURL(cfg.ProviderURL), bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -270,7 +287,6 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 		return "", err
 	}
 	if res.StatusCode != http.StatusOK {
-		debugSection(cfg.Debug, "llm error "+model, fmt.Sprintf("HTTP %d\n%s", res.StatusCode, raw))
 		return "", fmt.Errorf("%s: HTTP %d: %s", model, res.StatusCode, clip(string(raw)))
 	}
 	var envelope struct {
@@ -287,20 +303,12 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 		return "", fmt.Errorf("%s: empty choices", model)
 	}
 	content := jsonContent(envelope.Choices[0].Message.Content)
-	debugSection(cfg.Debug, "llm response "+model, content)
 	if dest != nil {
 		if err := json.Unmarshal([]byte(content), dest); err != nil {
 			return content, fmt.Errorf("%s: content: %w", model, err)
 		}
 	}
 	return content, nil
-}
-
-func debugSection(w io.Writer, title, body string) {
-	if w == nil {
-		return
-	}
-	fmt.Fprintf(w, "----- %s -----\n%s\n\n", title, strings.TrimRight(body, "\n"))
 }
 
 func jsonContent(s string) string {

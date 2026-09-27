@@ -8,14 +8,14 @@ import (
 )
 
 // Row is one fact. Unknown facts are omitted. Value is yes or no.
-// Why is a short reason for a permission, filled in after the model replies.
+// Reason is a short phrase for a permission, filled in after the model replies.
 type Row struct {
 	Fact     string
 	Value    string
 	Basis    string
 	Source   string
 	Evidence string
-	Why      string
+	Reason   string
 }
 
 // FromReport builds the APK rows. A missing INTERNET permission is offline_capable: yes.
@@ -33,6 +33,17 @@ func FromReport(rep detect.Report, hash string) []Row {
 			Fact: fact, Value: "yes", Basis: "apk", Source: hash, Evidence: evidence,
 		})
 	}
+	libFacts := map[string][]string{}
+	var libOrder []string
+	note := func(fact, label string) {
+		if _, ok := libFacts[fact]; !ok {
+			libOrder = append(libOrder, fact)
+		}
+		label = strings.TrimSpace(label)
+		if label != "" {
+			libFacts[fact] = append(libFacts[fact], label)
+		}
+	}
 	for _, lib := range rep.Libraries {
 		if skipLibrary(lib) {
 			continue
@@ -43,20 +54,22 @@ func FromReport(rep detect.Report, hash string) []Row {
 		}
 		antis := antiSet(lib.AntiFeatures)
 		if strings.EqualFold(lib.Type, "Mobile Analytics") || antis["Tracking"] {
-			add("tracking", label)
+			note("tracking", label)
 		}
 		if strings.EqualFold(lib.Type, "Advertisement") || antis["Ads"] {
-			add("ads", label)
+			note("ads", label)
 		}
 		if googlePlay(lib) {
-			add("gms", label)
+			note("gms", label)
 		}
 		if firebaseMessaging(lib) {
-			add("fcm", label)
+			note("fcm", label)
 		}
-		if antis["NonFreeComp"] || antis["NonFreeDep"] || antis["NonFreeAdd"] || antis["NonFreeNet"] {
-			add("nonfree_dependency", label)
-		}
+	}
+	for _, fact := range libOrder {
+		names := uniq(libFacts[fact])
+		sort.Strings(names)
+		add(fact, strings.Join(names, ", "))
 	}
 	found := map[string]bool{}
 	for _, row := range rows {
@@ -130,6 +143,31 @@ func firebaseMessaging(lib detect.Library) bool {
 		strings.Contains(blob, "firebase cloud messaging")
 }
 
+// Reasons returns yes facts whose purpose the model should phrase.
+func Reasons(rows []Row) []Row {
+	var out []Row
+	for _, row := range rows {
+		if row.Value != "yes" || !needsReason(row.Fact) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func needsReason(fact string) bool {
+	switch fact {
+	case "contacts", "sms", "location", "camera", "microphone", "call_log",
+		"request_install_packages", "query_all_packages", "system_alert_window",
+		"accessibility_service", "notification_listener", "device_admin",
+		"vpn_service", "input_method", "usage_stats",
+		"fcm", "tracking", "ads", "gms":
+		return true
+	default:
+		return false
+	}
+}
+
 func permissionFact(raw string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "android.permission.read_contacts", "android.permission.write_contacts":
@@ -175,6 +213,56 @@ func antiSet(in []string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// onePerFact keeps a single row per fact. Yes wins. Findings are merged.
+func onePerFact(rows []Row) []Row {
+	var order []string
+	by := map[string]Row{}
+	ev := map[string][]string{}
+	for _, row := range rows {
+		if row.Fact == "" || (row.Value != "yes" && row.Value != "no") {
+			continue
+		}
+		prev, ok := by[row.Fact]
+		if !ok {
+			order = append(order, row.Fact)
+			by[row.Fact] = row
+		} else if prev.Value != "yes" && row.Value == "yes" {
+			if row.Reason == "" {
+				row.Reason = prev.Reason
+			}
+			by[row.Fact] = row
+		} else if prev.Reason == "" && row.Reason != "" {
+			prev.Reason = row.Reason
+			by[row.Fact] = prev
+		}
+		for _, part := range strings.Split(row.Evidence, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				ev[row.Fact] = append(ev[row.Fact], part)
+			}
+		}
+	}
+	out := make([]Row, 0, len(order))
+	for _, fact := range order {
+		row := by[fact]
+		names := uniq(ev[fact])
+		sort.Strings(names)
+		row.Evidence = strings.Join(names, ", ")
+		out = append(out, row)
+	}
+	return out
+}
+
+// HasAPK reports whether any row was read from the APK.
+func HasAPK(rows []Row) bool {
+	for _, row := range rows {
+		if row.Basis == "apk" {
+			return true
+		}
+	}
+	return false
 }
 
 func dedupe(rows []Row) []Row {

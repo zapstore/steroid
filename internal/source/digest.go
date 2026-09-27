@@ -11,18 +11,27 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/zapstore/steroid/internal/scan"
 )
 
 const (
 	maxDigestPaths   = 12
-	maxDigestSignals = 24
-	maxPerFact       = 3
-	maxReadmeBytes   = 2000
-	maxLineRunes     = 160
+	maxDigestSignals = 48
+	maxPerFact       = 6
+	maxLineRunes     = 320
 	maxOutboundFiles = 8
-	maxOutboundLines = 18
-	outboundBefore   = 4
-	outboundAfter    = 12
+	maxOutboundLines = 54
+	outboundBefore   = 12
+	outboundAfter    = 36
+	signalBefore     = 6
+	signalAfter      = 12
+	useBefore        = 18
+	useAfter         = 54
+	denialReach      = 120
+	maxUseLines      = 108
+	maxUseRunes      = 480
+	maxHostFiles     = 2
 )
 
 // Digest is one bounded reading of an extracted tree.
@@ -99,11 +108,34 @@ var (
 )
 
 type hit struct {
-	topic string
-	fact  string
+	topic  string
+	fact   string
+	path   string
+	line   int
+	text   string
+	around []hit
+}
+
+// Use is a yes fact the model should explain from a code quote.
+type Use struct {
+	Fact string
+	Hint string
+}
+
+// Uses selects the yes facts that need a purpose phrase.
+func Uses(rows []scan.Row) []Use {
+	reasons := scan.Reasons(rows)
+	out := make([]Use, 0, len(reasons))
+	for _, row := range reasons {
+		out = append(out, Use{Fact: row.Fact, Hint: row.Evidence})
+	}
+	return out
+}
+
+type quote struct {
 	path  string
-	line  int
-	text  string
+	lines []hit
+	score int
 }
 
 type manifestInfo struct {
@@ -113,9 +145,10 @@ type manifestInfo struct {
 	cleartext   bool
 }
 
-// Read walks the extracted tree once and returns a digest small enough for one cheap completion.
+// Read walks the extracted tree once and returns a digest for one completion.
 // skipManifest omits the manifest permission list when the APK scan already produced it.
-func Read(t *Tree, skipManifest bool) Digest {
+// uses are the yes facts that need a call-site quote.
+func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 	if t == nil || t.Dir == "" {
 		return Digest{}
 	}
@@ -128,13 +161,19 @@ func Read(t *Tree, skipManifest bool) Digest {
 		project    []string
 		manifest   manifestInfo
 		outbound   []hit
+		useQuotes  = map[string]quote{}
+		account    *quote
+		encrypt    *quote
+		offline    *quote
+		host       []quote
+		serverDir  string
 	)
-	addHit := func(topic, fact, rel string, line int, text string) {
+	addHit := func(topic, fact, rel string, line int, text string, around []hit) {
 		if counts[fact] >= maxPerFact || len(hits) >= maxDigestSignals {
 			return
 		}
 		counts[fact]++
-		hits = append(hits, hit{topic: topic, fact: fact, path: rel, line: line, text: clipRunes(text, maxLineRunes)})
+		hits = append(hits, hit{topic: topic, fact: fact, path: rel, line: line, text: clipRunes(text, maxLineRunes), around: around})
 	}
 	_ = filepath.WalkDir(t.Dir, func(full string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -155,7 +194,7 @@ func Read(t *Tree, skipManifest bool) Digest {
 		case "readme.md":
 			if readmePath == "" || len(rel) < len(readmePath) {
 				readmePath = rel
-				readme = clipBytes(string(raw), maxReadmeBytes)
+				readme = string(raw)
 			}
 		case "androidmanifest.xml":
 			if manifest.path == "" || len(rel) < len(manifest.path) {
@@ -179,13 +218,36 @@ func Read(t *Tree, skipManifest bool) Digest {
 				project = append(project, rel+": "+line)
 			}
 		}
+		if isHostFile(base) && len(host) < maxHostFiles {
+			host = append(host, quote{path: rel, lines: headLines(string(raw), maxUseLines)})
+		}
+		if serverDir == "" {
+			serverDir = serverNote(rel)
+		}
 		if base == "androidmanifest.xml" || isTestPath(rel) {
 			return nil
 		}
-		scanFile(rel, raw, addHit)
+		lines := strings.Split(string(raw), "\n")
+		scanFile(rel, lines, addHit)
 		if codeExt(rel) {
 			outbound = append(outbound, collectOutbound(rel, raw)...)
+			if account == nil {
+				if q, ok := findQuote(rel, lines, accountLine); ok {
+					account = &q
+				}
+			}
+			if encrypt == nil {
+				if q, ok := findQuote(rel, lines, e2eeLine); ok {
+					encrypt = &q
+				}
+			}
 		}
+		if offline == nil && (codeExt(rel) || base == "readme.md") {
+			if q, ok := findQuote(rel, lines, offlineLine); ok {
+				offline = &q
+			}
+		}
+		captureUses(rel, lines, uses, useQuotes)
 		return nil
 	})
 	outbound = selectOutbound(outbound)
@@ -202,24 +264,24 @@ func Read(t *Tree, skipManifest bool) Digest {
 		}
 		return a.line < b.line
 	})
-	return Digest{Text: formatDigest(len(paths), paths, readmePath, readme, project, manifest, skipManifest, outbound, hits)}
+	return Digest{Text: formatDigest(len(paths), paths, readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt, offline, host, serverDir)}
 }
 
-func scanFile(rel string, raw []byte, addHit func(topic, fact, rel string, line int, text string)) {
-	lines := strings.Split(string(raw), "\n")
+func scanFile(rel string, lines []string, addHit func(topic, fact, rel string, line int, text string, around []hit)) {
 	seen := map[string]struct{}{}
 	for i, line := range lines {
 		low := strings.ToLower(strings.TrimSpace(line))
 		if strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
 			continue
 		}
-		if matched, ok := matchLine(low, rel, needles, seen); ok {
-			addHit(matched.topic, matched.fact, rel, i+1, strings.TrimSpace(line))
+		matched, ok := matchLine(low, rel, needles, seen)
+		if !ok {
+			matched, ok = matchLine(low, rel, permNeedles, seen)
+		}
+		if !ok {
 			continue
 		}
-		if matched, ok := matchLine(low, rel, permNeedles, seen); ok {
-			addHit(matched.topic, matched.fact, rel, i+1, strings.TrimSpace(line))
-		}
+		addHit(matched.topic, matched.fact, rel, i+1, strings.TrimSpace(line), signalAround(lines, i))
 	}
 }
 
@@ -253,10 +315,15 @@ func collectOutbound(rel string, raw []byte) []hit {
 	var spans []span
 	for _, i := range starts {
 		a, b := i-outboundBefore, i+outboundAfter
+		if start, end, ok := functionBounds(lines, i); ok {
+			a, b = start, end
+		}
 		for j := i; j >= 0 && i-j <= 30; j-- {
 			low := strings.ToLower(lines[j])
 			if urlRe.MatchString(lines[j]) || strings.Contains(low, ".url(") {
-				a = j
+				if j < a {
+					a = j
+				}
 				break
 			}
 		}
@@ -265,6 +332,18 @@ func collectOutbound(rel string, raw []byte) []hit {
 		}
 		if b >= len(lines) {
 			b = len(lines) - 1
+		}
+		if b-a > maxOutboundLines {
+			if i-a > maxOutboundLines/3 {
+				a = i - maxOutboundLines/3
+			}
+			if a < 0 {
+				a = 0
+			}
+			b = a + maxOutboundLines
+			if b >= len(lines) {
+				b = len(lines) - 1
+			}
 		}
 		if len(spans) > 0 && a <= spans[len(spans)-1].b+1 {
 			spans[len(spans)-1].b = b
@@ -276,6 +355,9 @@ func collectOutbound(rel string, raw []byte) []hit {
 	for _, sp := range spans {
 		if sp.b-sp.a > maxOutboundLines {
 			sp.b = sp.a + maxOutboundLines
+		}
+		if sp.b >= len(lines) {
+			sp.b = len(lines) - 1
 		}
 		for i := sp.a; i <= sp.b; i++ {
 			text := strings.TrimSpace(lines[i])
@@ -477,7 +559,7 @@ func gradleID(body string) string {
 	return ""
 }
 
-func formatDigest(files int, paths []string, readmePath, readme string, project []string, manifest manifestInfo, skipManifest bool, outbound, hits []hit) string {
+func formatDigest(files int, paths []string, readmePath, readme string, project []string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt, offline *quote, host []quote, serverDir string) string {
 	var b strings.Builder
 	if files > 0 {
 		b.WriteString("Files: ")
@@ -550,23 +632,81 @@ func formatDigest(files int, paths []string, readmePath, readme string, project 
 			b.WriteByte('\n')
 		}
 	}
-	if len(hits) > 0 {
-		b.WriteString("\nSignals:\n")
-		for _, h := range hits {
-			b.WriteString("- ")
-			b.WriteString(h.topic)
+	if len(uses) > 0 {
+		keys := make([]string, 0, len(uses))
+		for key := range uses {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		b.WriteString("\nUses:\n")
+		for _, key := range keys {
+			q := uses[key]
+			b.WriteString(key)
 			b.WriteByte(' ')
-			b.WriteString(h.fact)
-			b.WriteByte(' ')
-			b.WriteString(h.path)
-			b.WriteByte(':')
-			b.WriteString(strconv.Itoa(h.line))
-			b.WriteString(": ")
-			b.WriteString(h.text)
+			writeQuote(&b, q)
+		}
+	}
+	writeNamed(&b, "Account", account)
+	writeNamed(&b, "Encryption", encrypt)
+	writeNamed(&b, "Offline", offline)
+	if len(host) > 0 || serverDir != "" {
+		b.WriteString("\nHosting:\n")
+		for _, q := range host {
+			writeQuote(&b, q)
+		}
+		if serverDir != "" {
+			b.WriteString(serverDir)
 			b.WriteByte('\n')
 		}
 	}
+	if len(hits) > 0 {
+		b.WriteString("\nSignals:\n")
+		for _, h := range hits {
+			writeSignal(&b, h)
+			for _, around := range h.around {
+				around.topic = h.topic
+				around.fact = h.fact
+				around.path = h.path
+				writeSignal(&b, around)
+			}
+		}
+	}
 	return strings.TrimSpace(b.String())
+}
+
+func writeSignal(b *strings.Builder, h hit) {
+	b.WriteString("- ")
+	b.WriteString(h.topic)
+	b.WriteByte(' ')
+	b.WriteString(h.fact)
+	b.WriteByte(' ')
+	b.WriteString(h.path)
+	b.WriteByte(':')
+	b.WriteString(strconv.Itoa(h.line))
+	b.WriteString(": ")
+	b.WriteString(h.text)
+	b.WriteByte('\n')
+}
+
+func writeNamed(b *strings.Builder, title string, q *quote) {
+	if q == nil || len(q.lines) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(title)
+	b.WriteString(":\n")
+	writeQuote(b, *q)
+}
+
+func writeQuote(b *strings.Builder, q quote) {
+	b.WriteString(q.path)
+	b.WriteByte('\n')
+	for _, line := range q.lines {
+		b.WriteString(strconv.Itoa(line.line))
+		b.WriteString(": ")
+		b.WriteString(line.text)
+		b.WriteByte('\n')
+	}
 }
 
 func pickPaths(paths []string) []string {
@@ -651,15 +791,328 @@ func skipHost(host string) bool {
 	return false
 }
 
-func clipBytes(s string, n int) string {
-	if len(s) <= n {
-		return s
+var factUses = map[string][]string{
+	"contacts":                 {"contactscontract"},
+	"sms":                      {"smsmanager", "telephonymanager"},
+	"location":                 {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
+	"camera":                   {"imagecapture", "camerax"},
+	"microphone":               {"mediarecorder", "audiorecord"},
+	"call_log":                 {"calllog"},
+	"request_install_packages": {"request_install_packages"},
+	"query_all_packages":       {"query_all_packages", "getinstalledpackages", "getinstalledapplications"},
+	"system_alert_window":      {"system_alert_window", "type_application_overlay"},
+	"accessibility_service":    {"accessibilityservice"},
+	"notification_listener":    {"notificationlistenerservice"},
+	"device_admin":             {"deviceadminreceiver"},
+	"vpn_service":              {"vpnservice"},
+	"input_method":             {"inputmethodservice"},
+	"usage_stats":              {"usagestatsmanager"},
+	"fcm":                      {"firebasemessaging", "firebase.messaging", "firebase_messaging"},
+	"tracking":                 {"crashlytics", "mixpanel", "sentry", "firebaseanalytics"},
+	"ads":                      {"admob", "adview", "interstitialad"},
+	"gms":                      {"googleapiclient", "play-services"},
+}
+
+// factActions are call sites. A mention of the permission name is a weaker quote.
+var factActions = map[string][]string{
+	"request_install_packages": {
+		"packageinstaller",
+		"action_install_package",
+		"vnd.android.package-archive",
+		"canrequestpackageinstalls",
+		"manage_unknown_app_sources",
+	},
+}
+
+func captureUses(rel string, lines []string, uses []Use, got map[string]quote) {
+	if isTestPath(rel) {
+		return
 	}
-	s = s[:n]
-	for !utf8.ValidString(s) && s != "" {
-		s = s[:len(s)-1]
+	for _, use := range uses {
+		specific := factUses[use.Fact]
+		hints := hintTokens(use.Hint)
+		if len(specific) == 0 && len(hints) == 0 {
+			continue
+		}
+		for i, line := range lines {
+			low := strings.ToLower(strings.TrimSpace(line))
+			if low == "" || strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
+				continue
+			}
+			action := containsAny(low, factActions[use.Fact]...)
+			spec := containsAny(low, specific...)
+			if !action && !spec && !containsAny(low, hints...) {
+				continue
+			}
+			score := 1
+			if spec {
+				score = 2
+			}
+			if permissionChoice(lines, i) >= 0 {
+				score = 3
+			}
+			if action {
+				score = 5
+			}
+			if prev, ok := got[use.Fact]; ok && prev.score >= score {
+				continue
+			}
+			got[use.Fact] = quote{path: rel, lines: useWindow(lines, i), score: score}
+		}
 	}
-	return s
+}
+
+// permissionChoice returns a nearby line that requests the permission or handles the user's answer.
+func permissionChoice(lines []string, i int) int {
+	a, b := i-denialReach, i+denialReach
+	if a < 0 {
+		a = 0
+	}
+	if b >= len(lines) {
+		b = len(lines) - 1
+	}
+	found := -1
+	for j := a; j <= b; j++ {
+		if !choiceLine(strings.ToLower(lines[j])) {
+			continue
+		}
+		if found < 0 || abs(j-i) < abs(found-i) {
+			found = j
+		}
+	}
+	return found
+}
+
+func choiceLine(low string) bool {
+	return containsAny(low,
+		"requestpermissions", "requestpermission(", "requestmultiplepermissions",
+		"checkselfpermission", "onrequestpermissionsresult",
+		"shouldshowrequestpermissionrationale", "permission_denied", "permission_granted",
+		"registerforactivityresult",
+	)
+}
+
+func useWindow(lines []string, i int) []hit {
+	a, b := i-useBefore, i+useAfter
+	if start, end, ok := functionBounds(lines, i); ok {
+		a, b = start, end
+	}
+	if j := permissionChoice(lines, i); j >= 0 {
+		if j < a {
+			a = j
+		}
+		if j > b {
+			b = j
+		}
+	}
+	if a < 0 {
+		a = 0
+	}
+	if b >= len(lines) {
+		b = len(lines) - 1
+	}
+	if b-a+1 > maxUseLines {
+		a = i - maxUseLines/3
+		if a < 0 {
+			a = 0
+		}
+		b = a + maxUseLines - 1
+		if b >= len(lines) {
+			b = len(lines) - 1
+		}
+	}
+	return clipWindow(lines, a, b, maxUseRunes)
+}
+
+// functionBounds returns the function that contains line i, when one is visible.
+func functionBounds(lines []string, i int) (int, int, bool) {
+	start := -1
+	depth := 0
+	for j := i; j >= 0 && i-j <= maxUseLines; j-- {
+		depth += strings.Count(lines[j], "}") - strings.Count(lines[j], "{")
+		if funcHeader(lines[j]) && depth <= 0 {
+			start = j
+			break
+		}
+	}
+	if start < 0 {
+		return 0, 0, false
+	}
+	depth = 0
+	opened := false
+	end := start
+	for j := start; j < len(lines) && j-start < maxUseLines; j++ {
+		depth += strings.Count(lines[j], "{") - strings.Count(lines[j], "}")
+		if strings.Contains(lines[j], "{") {
+			opened = true
+		}
+		end = j
+		if opened && depth <= 0 {
+			break
+		}
+	}
+	return start, end, true
+}
+
+func funcHeader(line string) bool {
+	low := strings.ToLower(strings.TrimSpace(line))
+	if low == "" || strings.HasPrefix(low, "//") || strings.HasPrefix(low, "*") || strings.HasPrefix(low, "import ") {
+		return false
+	}
+	if strings.HasPrefix(low, "fun ") || strings.HasPrefix(low, "func ") || strings.HasPrefix(low, "def ") || strings.HasPrefix(low, "function ") || strings.HasPrefix(low, "fn ") {
+		return true
+	}
+	if !strings.Contains(low, "(") {
+		return false
+	}
+	return containsAny(low, " fun ", " func ", " def ", " function ", "public ", "private ", "protected ", "internal ", "override ", "suspend ", "static ")
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func hintTokens(hint string) []string {
+	hint = strings.ToLower(hint)
+	var tokens []string
+	var cur strings.Builder
+	flush := func() {
+		s := cur.String()
+		cur.Reset()
+		if len(s) < 4 {
+			return
+		}
+		switch s {
+		case "android", "permission", "includes", "with", "from", "that", "this", "true", "false":
+			return
+		}
+		tokens = append(tokens, s)
+	}
+	for _, r := range hint {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			cur.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return tokens
+}
+
+func findQuote(rel string, lines []string, match func(string) bool) (quote, bool) {
+	for i, line := range lines {
+		if match(strings.ToLower(strings.TrimSpace(line))) {
+			return quote{path: rel, lines: useWindow(lines, i)}, true
+		}
+	}
+	return quote{}, false
+}
+
+func accountLine(low string) bool {
+	if strings.HasPrefix(low, "//") || strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
+		return false
+	}
+	return containsAny(low, "signin(", "sign_in(", "login(", "authenticate(", ".signin(", ".login(")
+}
+
+func offlineLine(low string) bool {
+	if strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
+		return false
+	}
+	return containsAny(low,
+		"works offline", "work offline", "usable offline", "available offline",
+		"offline mode", "offline-first", "offline first",
+		"without internet", "without a network", "no internet required",
+		"local-first", "local first",
+	)
+}
+
+func e2eeLine(low string) bool {
+	return containsAny(low, "e2ee", "end-to-end", "end to end", "secretbox", "libsodium", "nacl.box", "sessioncipher", "signalprotocol")
+}
+
+func isHostFile(base string) bool {
+	switch base {
+	case "dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml":
+		return true
+	default:
+		return false
+	}
+}
+
+func serverNote(rel string) string {
+	for _, part := range strings.Split(rel, "/") {
+		switch part {
+		case "server", "deploy":
+			return part + "/"
+		}
+	}
+	return ""
+}
+
+func headLines(raw string, n int) []hit {
+	var out []hit
+	for i, line := range strings.Split(raw, "\n") {
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+		out = append(out, hit{line: i + 1, text: clipRunes(text, maxLineRunes)})
+		if len(out) == n {
+			break
+		}
+	}
+	return out
+}
+
+func lineWindow(lines []string, i, before, after int) []hit {
+	a, b := i-before, i+after
+	if a < 0 {
+		a = 0
+	}
+	if b >= len(lines) {
+		b = len(lines) - 1
+	}
+	if b-a+1 > maxUseLines {
+		b = a + maxUseLines - 1
+	}
+	return clipWindow(lines, a, b, maxLineRunes)
+}
+
+func clipWindow(lines []string, a, b, runes int) []hit {
+	if a < 0 {
+		a = 0
+	}
+	if b >= len(lines) {
+		b = len(lines) - 1
+	}
+	var out []hit
+	for j := a; j <= b; j++ {
+		text := strings.TrimSpace(lines[j])
+		if text == "" {
+			continue
+		}
+		out = append(out, hit{line: j + 1, text: clipRunes(text, runes)})
+	}
+	return out
+}
+
+func signalAround(lines []string, i int) []hit {
+	var out []hit
+	for _, line := range lineWindow(lines, i, signalBefore, signalAfter) {
+		if line.line == i+1 {
+			continue
+		}
+		low := strings.ToLower(line.text)
+		if strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 func clipRunes(s string, n int) string {

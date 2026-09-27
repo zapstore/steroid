@@ -1,17 +1,18 @@
 package doc
 
-import "testing"
+import (
+	"testing"
 
-func TestRoundTrip(t *testing.T) {
-	in := File{APK: "abc", Icon: "https://cdn.example/a.webp", Summary: "Maps.", Security: "No trackers.", Facts: "gms: no", Warnings: ""}
-	got, err := Parse(string(in.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Body() != in.Body() || got.APK != "abc" {
-		t.Fatalf("%+v", got)
-	}
-	if Hash(got.Body()) != Hash(in.Body()) {
-		t.Fatal("hash")
+	"github.com/zapstore/steroid/internal/scan"
+)
+
+func TestFacts(t *testing.T) {
+	got := Facts([]scan.Row{
+		{Fact: "gms", Value: "no"},
+		{Fact: "skip", Value: "maybe"},
+		{Fact: "fcm", Value: "yes"},
+	})
+	if got != "gms: no\nfcm: yes" {
+		t.Fatalf("%q", got)
 	}
 }

@@ -24,7 +24,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: steroid enrich [--skip-analysis] [--debug debug.txt] <app-id>\n")
+	fmt.Fprintf(os.Stderr, "usage: steroid enrich --filter substring\n")
 	fmt.Fprintf(os.Stderr, "       steroid serve\n")
-	fmt.Fprintf(os.Stderr, "       steroid seal [--skip-analysis]\n")
+	fmt.Fprintf(os.Stderr, "       steroid seal [--filter substring] [--no-enrich]\n")
 }

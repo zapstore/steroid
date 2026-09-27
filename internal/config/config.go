@@ -3,7 +3,6 @@ package config
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,11 +11,7 @@ import (
 )
 
 const (
-	DefaultModel      = "z-ai/glm-5.3-flash"
-	MaxPageBytes      = 256 << 10
-	AndroidAPKMIME    = "application/vnd.android.package-archive"
-	PreferredABI      = "android-arm64-v8a"
-	PreferredABIShort = "arm64-v8a"
+	DefaultModel = "z-ai/glm-5.3-flash"
 )
 
 // DefaultFallbacks are tried after DefaultModel when EMBED_MODEL is unset.
@@ -33,7 +28,6 @@ type Config struct {
 	APIKey      string
 	Model       string
 	Fallbacks   []string
-	Debug       io.Writer
 }
 
 // LoadDotEnv reads .env from the exact working directory. It does not

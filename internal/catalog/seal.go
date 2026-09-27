@@ -2,25 +2,31 @@ package catalog
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/zapstore/relay/pkg/events"
-	"github.com/zapstore/steroid/internal/doc"
-	"github.com/zapstore/steroid/internal/encode"
-	"github.com/zapstore/steroid/internal/profile"
+	"github.com/zapstore/steroid/internal/picture"
 	"github.com/zapstore/steroid/internal/run"
 )
 
-// Seal reads the relay database, enriches changed listings, and publishes the next snapshot.
-func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, opt run.Options, log *slog.Logger) (int64, error) {
-	if log == nil {
-		log = slog.Default()
-	}
+// parallelJobs is how many listings Seal enriches at once.
+const parallelJobs = 4
+
+// Seal reads the relay database and publishes the next snapshot.
+// It enriches changed listings unless skipEnrich is set.
+// filter is a substring of the app ID. An empty filter selects every changed listing.
+// A non-empty filter selects those listings only. The snapshot still contains the full catalog.
+// With skipEnrich, profile avatars are left as they are, and artifact files are included only when the app cache apk matches the listing asset hash.
+func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, filter string, skipEnrich bool) (int64, error) {
 	raw, err := LoadEvents(ctx, dbPath, signer.PubKey)
 	if err != nil {
 		return 0, err
@@ -49,155 +55,228 @@ func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, opt
 	}
 	var work []Listing
 	for _, listing := range next.Listings {
+		if filter != "" {
+			if strings.Contains(listing.AppID, filter) {
+				work = append(work, listing)
+			}
+			continue
+		}
 		if _, ok := changed[listing.AppID]; ok {
 			work = append(work, listing)
 		}
 	}
-	log.Info("seal", "listings", len(next.Listings), "changed", len(work), "from", latest)
-	for i, listing := range work {
-		n := i + 1
-		state, err := listingArtifacts(data, listing)
-		if err != nil {
+	if filter != "" && len(work) == 0 {
+		return 0, fmt.Errorf("no listings match %q", filter)
+	}
+	enriching := strconv.Itoa(len(work))
+	if skipEnrich {
+		enriching = "skip"
+	}
+	writeBlock(runLine(len(next.Listings), enriching, filter, latest))
+	if !skipEnrich {
+		if err := enrichWork(ctx, data, modelDir, work); err != nil {
 			return 0, err
 		}
-		switch state {
-		case artifactsKept:
-			log.Info("app", "n", n, "total", len(work), "app_id", listing.AppID, "status", "kept")
-			writeAvatar(ctx, data, listing.App.PubKey, log)
-		case artifactsVector:
-			log.Info("app", "n", n, "total", len(work), "app_id", listing.AppID, "status", "vector")
-			writeAvatar(ctx, data, listing.App.PubKey, log)
-			if err := writeVector(ctx, data, modelDir, listing); err != nil {
-				return 0, err
-			}
-			log.Info("app", "n", n, "total", len(work), "app_id", listing.AppID, "status", "done")
-		default:
-			version := ""
-			if rel, err := events.ParseRelease(&listing.Release); err == nil {
-				version = rel.Version
-			}
-			log.Info("app", "n", n, "total", len(work), "app_id", listing.AppID, "version", version, "status", "start")
-			if err := Enrich(ctx, data, modelDir, listing, opt, log); err != nil {
-				return 0, err
-			}
-			log.Info("app", "n", n, "total", len(work), "app_id", listing.AppID, "status", "done")
+		if err := ensureAvatars(ctx, data, next.Profiles); err != nil {
+			return 0, err
 		}
 	}
-	return Publish(ctx, data, next, nil, signer, time.Now().Unix())
+	return Publish(ctx, data, next, signer, time.Now().Unix(), filter, skipEnrich)
 }
 
-const (
-	artifactsNew = iota
-	artifactsVector
-	artifactsKept
-)
-
-// listingArtifacts reports whether a restarted seal can skip this listing.
-// A stored analysis is kept when its apk hash and icon URL still match and the summary is present.
-func listingArtifacts(data string, listing Listing) (int, error) {
-	in, _, err := ListingInput(listing, ArtifactDir(data))
+// EnrichMatching enriches listings whose app ID contains filter. It does not publish.
+func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string) error {
+	if strings.TrimSpace(filter) == "" {
+		return fmt.Errorf("filter is empty")
+	}
+	raw, err := LoadEvents(ctx, dbPath, "")
 	if err != nil {
-		return 0, err
+		return err
 	}
-	raw, err := os.ReadFile(filepath.Join(AppDir(data, listing.AppID), "analysis"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return artifactsNew, nil
-		}
-		return 0, err
-	}
-	parsed, err := doc.Parse(string(raw))
-	if err != nil || strings.TrimSpace(parsed.Summary) == "" || parsed.APK == "" || parsed.APK != in.APKHash || parsed.Icon != in.IconURL {
-		return artifactsNew, nil
-	}
-	if in.IconURL != "" {
-		info, err := os.Stat(filepath.Join(AppDir(data, listing.AppID), "icon.webp"))
-		if err != nil || info.Size() == 0 {
-			return artifactsNew, nil
+	next := Resolve(raw, "")
+	var work []Listing
+	for _, listing := range next.Listings {
+		if strings.Contains(listing.AppID, filter) {
+			work = append(work, listing)
 		}
 	}
-	info, err := os.Stat(filepath.Join(AppDir(data, listing.AppID), "vector"))
-	if err != nil || info.Size() == 0 {
-		return artifactsVector, nil
+	if len(work) == 0 {
+		return fmt.Errorf("no listings match %q", filter)
 	}
-	return artifactsKept, nil
+	writeBlock(enrichLine(len(work), len(next.Listings), filter))
+	err = enrichWork(ctx, data, modelDir, work)
+	if err != nil {
+		return err
+	}
+	return ensureAvatars(ctx, data, profilesFor(State{Listings: work, Profiles: next.Profiles}, filter))
 }
 
-// Enrich writes artifacts/<app-id>/analysis, icon.webp, and vector for one listing.
-// It also writes artifacts/<hex>.webp from the publisher's kind 0 picture.
-func Enrich(ctx context.Context, data, modelDir string, listing Listing, opt run.Options, log *slog.Logger) error {
-	if log == nil {
-		log = slog.Default()
+func runLine(listings int, enriching, filter string, from int64) string {
+	s := fmt.Sprintf("seal %d listings, enrich %s, from %d", listings, enriching, from)
+	if f := strings.TrimSpace(filter); f != "" {
+		s += ", filter " + f
 	}
-	in, _, err := ListingInput(listing, ArtifactDir(data))
-	if err != nil {
-		return err
-	}
-	writeAvatar(ctx, data, listing.App.PubKey, log)
-	run.Do(ctx, in, opt, log)
-	return writeVector(ctx, data, modelDir, listing)
+	return s
 }
 
-func writeVector(ctx context.Context, data, modelDir string, listing Listing) error {
-	_, app, err := ListingInput(listing, ArtifactDir(data))
+func enrichLine(matched, listings int, filter string) string {
+	s := fmt.Sprintf("enrich %d/%d", matched, listings)
+	if f := strings.TrimSpace(filter); f != "" {
+		s += ", filter " + f
+	}
+	return s
+}
+
+func enrichWork(ctx context.Context, data, modelDir string, work []Listing) error {
+	cfg, err := run.ModelConfig()
 	if err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(filepath.Join(AppDir(data, listing.AppID), "analysis"))
-	if err != nil {
-		return err
-	}
-	parsed, err := doc.Parse(string(raw))
-	if err != nil {
-		return err
-	}
-	text := parsed.Summary
-	if parsed.Facts != "" {
-		if text != "" {
-			text += "\n\n"
+	client := &http.Client{Timeout: 2 * time.Minute}
+	var failed atomic.Int32
+	err = processListings(ctx, work, parallelJobs, func(ctx context.Context, _ int, listing Listing) error {
+		bad, err := Enrich(ctx, data, modelDir, listing, cfg, client)
+		if bad || err != nil {
+			failed.Add(1)
 		}
-		text += parsed.Facts
+		return nil
+	})
+	bad := int(failed.Load())
+	if bad == 0 {
+		writeBlock(fmt.Sprintf("%d ok", len(work)))
+	} else {
+		writeBlock(fmt.Sprintf("%d ok, %d failed", len(work)-bad, bad))
 	}
-	if text == "" {
-		text = app.Summary
-	}
-	if text == "" {
+	return err
+}
+
+type sealJob struct {
+	n       int
+	listing Listing
+}
+
+// processListings runs fn on each listing with at most limit calls in flight.
+// The first error cancels the rest. Listings not yet handed to a worker are left unstarted.
+func processListings(ctx context.Context, work []Listing, limit int, fn func(context.Context, int, Listing) error) error {
+	if len(work) == 0 {
 		return nil
 	}
-	out, err := encode.Document(ctx, modelDir, text)
-	if err != nil {
-		return err
+	if limit < 1 {
+		limit = 1
 	}
-	vec := make([]byte, len(out.Vector))
-	for i, n := range out.Vector {
-		vec[i] = byte(n)
+	if limit > len(work) {
+		limit = len(work)
 	}
-	return os.WriteFile(filepath.Join(AppDir(data, listing.AppID), "vector"), vec, 0o644)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan sealJob)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var first error
+	fail := func(err error) {
+		if err == nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if first == nil {
+			first = err
+			cancel()
+		}
+	}
+	for range limit {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				fail(fn(ctx, job.n, job.listing))
+			}
+		}()
+	}
+	for i, listing := range work {
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case jobs <- sealJob{n: i + 1, listing: listing}:
+			continue
+		}
+		break
+	}
+	close(jobs)
+	wg.Wait()
+	if first != nil {
+		return first
+	}
+	return ctx.Err()
 }
 
-func writeAvatar(ctx context.Context, data, pubkey string, log *slog.Logger) {
-	name, err := avatarFilename(pubkey)
-	if err != nil {
-		log.Error("avatar", "pubkey", pubkey, "error", err)
+func ensureAvatars(ctx context.Context, data string, profiles []Profile) error {
+	var ok int
+	var fails []string
+	note := func(pubkey string, err error) {
+		fails = append(fails, pubkey+": "+oneLine(err.Error()))
+	}
+	for _, profile := range profiles {
+		if profile.Picture == "" {
+			continue
+		}
+		name, err := avatarFilename(profile.Pubkey)
+		if err != nil {
+			note(profile.Pubkey, err)
+			continue
+		}
+		side := filepath.Join(ArtifactDir(data), profile.Pubkey+".url")
+		stored, _ := os.ReadFile(side)
+		webp := filepath.Join(ArtifactDir(data), name)
+		if info, err := os.Stat(webp); err == nil && info.Size() > 0 && strings.TrimSpace(string(stored)) == profile.Picture {
+			continue
+		}
+		raw, err := picture.Fetch(ctx, profile.Picture)
+		if err != nil {
+			note(profile.Pubkey, err)
+			continue
+		}
+		encoded, err := picture.Encode(raw, picture.Avatar)
+		if err != nil {
+			note(profile.Pubkey, err)
+			continue
+		}
+		if err := saveAvatar(data, profile.Pubkey, encoded); err != nil {
+			note(profile.Pubkey, err)
+			writeAvatarBlock(ok, fails)
+			return err
+		}
+		if err := os.WriteFile(side, []byte(profile.Picture), 0o644); err != nil {
+			note(profile.Pubkey, err)
+			writeAvatarBlock(ok, fails)
+			return err
+		}
+		ok++
+	}
+	writeAvatarBlock(ok, fails)
+	return nil
+}
+
+func writeAvatarBlock(ok int, fails []string) {
+	if ok == 0 && len(fails) == 0 {
 		return
 	}
-	if info, err := os.Stat(filepath.Join(ArtifactDir(data), name)); err == nil && info.Size() > 0 {
-		return
+	var b strings.Builder
+	if len(fails) == 0 {
+		fmt.Fprintf(&b, "avatars %d ok\n", ok)
+	} else {
+		fmt.Fprintf(&b, "avatars %d ok, %d failed\n", ok, len(fails))
+		for _, fail := range fails {
+			fmt.Fprintf(&b, "  fail %s\n", fail)
+		}
 	}
-	_, webp, err := profile.Load(ctx, pubkey)
-	if err != nil {
-		log.Error("avatar", "pubkey", pubkey, "error", err)
-		return
-	}
-	if len(webp) == 0 {
-		log.Info("avatar", "pubkey", pubkey, "status", "missing")
-		return
-	}
-	if err := saveAvatar(data, pubkey, webp); err != nil {
-		log.Error("avatar", "pubkey", pubkey, "error", err)
-		return
-	}
-	log.Info("avatar", "pubkey", pubkey, "bytes", len(webp))
+	writeBlock(b.String())
 }
 
 func saveAvatar(data, pubkey string, webp []byte) error {
@@ -244,17 +323,28 @@ func ListingInput(listing Listing, cacheDir string) (run.Input, events.App, erro
 }
 
 func apkOf(listing Listing) (url, hash string) {
+	var fallback events.Asset
+	var have bool
 	for _, asset := range listing.Assets {
 		parsed, err := events.ParseAsset(&asset)
 		if err != nil {
 			continue
 		}
-		if parsed.URL != "" {
-			url = parsed.URL
+		if parsed.URL == "" && parsed.Hash == "" {
+			continue
 		}
-		if parsed.Hash != "" {
-			hash = parsed.Hash
+		for _, platform := range parsed.Platforms {
+			if platform == preferredABI && parsed.URL != "" && parsed.Hash != "" {
+				return parsed.URL, parsed.Hash
+			}
+		}
+		if !have {
+			fallback = parsed
+			have = true
 		}
 	}
-	return url, hash
+	if !have {
+		return "", ""
+	}
+	return fallback.URL, fallback.Hash
 }

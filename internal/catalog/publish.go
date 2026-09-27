@@ -3,13 +3,18 @@ package catalog
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/zapstore/relay/pkg/events"
 )
 
 // Publish stores snapshot n+1 and the adjacent bundle. Identical state does nothing.
-func Publish(ctx context.Context, data string, next State, profiles []nostr.Event, signer Signer, sealedAt int64) (int64, error) {
+// filter adds those apps' artifact files to the bundle even when their events are unchanged.
+// matchAPK includes an app's artifact files only when its cache apk line equals the listing asset hash.
+func Publish(ctx context.Context, data string, next State, signer Signer, sealedAt int64, filter string, matchAPK bool) (int64, error) {
 	if err := os.MkdirAll(SnapDir(data), 0o755); err != nil {
 		return 0, err
 	}
@@ -21,30 +26,37 @@ func Publish(ctx context.Context, data string, next State, profiles []nostr.Even
 		return 0, err
 	}
 	var prev State
-	var prevProfiles []nostr.Event
 	if latest > 0 {
 		prevEvents, err := ReadSnapEvents(SnapPath(data, latest))
 		if err != nil {
 			return 0, err
 		}
 		prev = Resolve(prevEvents, signer.PubKey)
-		prevProfiles = keepKind0(prevEvents)
 	}
 	diff := Compare(prev, next)
-	diff.Avatars = changedAvatars(prevProfiles, profiles)
+	if filter != "" {
+		diff.Apps = includeMatching(diff.Apps, next, filter)
+	}
+	if matchAPK {
+		diff.Apps = appsMatchingAPK(data, next, diff.Apps)
+	}
+	diff.Avatars = pictureAvatars(data, prev.Profiles, next.Profiles)
 	if latest > 0 && len(diff.Events) == 0 && len(diff.AppDeletes) == 0 && len(diff.Coords) == 0 && len(diff.Apps) == 0 && len(diff.Avatars) == 0 {
 		return latest, nil
 	}
 	if latest == 0 {
 		diff.Apps = appIDs(next)
-		diff.Avatars = avatarFiles(data)
+		if matchAPK {
+			diff.Apps = appsMatchingAPK(data, next, diff.Apps)
+		}
+		diff.Avatars = pictureAvatars(data, nil, next.Profiles)
 	}
 	nextN := latest + 1
 	body, err := BuildBundle(ctx, data, latest, nextN, sealedAt, diff, signer)
 	if err != nil {
 		return 0, err
 	}
-	events := append(next.Events(), profiles...)
+	events := next.Events()
 	if err := WriteSnap(SnapPath(data, nextN), events); err != nil {
 		return 0, err
 	}
@@ -52,6 +64,28 @@ func Publish(ctx context.Context, data string, next State, profiles []nostr.Even
 		return 0, err
 	}
 	return nextN, nil
+}
+
+// appsMatchingAPK keeps apps whose cache was produced for the listing's current asset hash.
+func appsMatchingAPK(data string, st State, ids []string) []string {
+	hashOf := make(map[string]string, len(st.Listings))
+	for _, listing := range st.Listings {
+		_, hash := apkOf(listing)
+		hashOf[listing.AppID] = strings.ToLower(strings.TrimSpace(hash))
+	}
+	var out []string
+	for _, id := range ids {
+		hash := hashOf[id]
+		if hash == "" {
+			continue
+		}
+		m, ok := readMemo(AppDir(data, id))
+		if !ok || strings.ToLower(strings.TrimSpace(m.APK)) != hash {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 func appIDs(st State) []string {
@@ -89,22 +123,27 @@ func keepKind0(in []nostr.Event) []nostr.Event {
 	return out
 }
 
-func changedAvatars(prev, next []nostr.Event) []string {
+func pictureAvatars(data string, prev, next []Profile) []string {
 	old := map[string]string{}
-	for _, event := range prev {
-		old[event.PubKey] = event.ID
+	for _, profile := range prev {
+		old[profile.Pubkey] = profile.Picture
 	}
 	var out []string
-	for _, event := range next {
-		if old[event.PubKey] == event.ID {
+	for _, profile := range next {
+		if profile.Picture == "" || old[profile.Pubkey] == profile.Picture {
 			continue
 		}
-		name, err := avatarFilename(event.PubKey)
+		name, err := avatarFilename(profile.Pubkey)
 		if err != nil {
+			continue
+		}
+		side, err := os.ReadFile(filepath.Join(ArtifactDir(data), profile.Pubkey+".url"))
+		if err != nil || strings.TrimSpace(string(side)) != profile.Picture {
 			continue
 		}
 		out = append(out, name)
 	}
+	slices.Sort(out)
 	return out
 }
 
@@ -132,13 +171,9 @@ func EnsureBundle(ctx context.Context, data string, from, to int64, stackPubkey 
 	diff := Compare(prev, next)
 	if from == 0 {
 		diff.Apps = appIDs(next)
-		diff.Avatars = avatarFiles(data)
+		diff.Avatars = pictureAvatars(data, nil, next.Profiles)
 	} else {
-		prevEvents, err := ReadSnapEvents(SnapPath(data, from))
-		if err != nil {
-			return nil, err
-		}
-		diff.Avatars = changedAvatars(keepKind0(prevEvents), keepKind0(nextEvents))
+		diff.Avatars = pictureAvatars(data, prev.Profiles, next.Profiles)
 	}
 	body, err := BuildBundle(ctx, data, from, to, sealedAt, diff, signer)
 	if err != nil {

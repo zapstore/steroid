@@ -1,46 +1,71 @@
 package source
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/zapstore/steroid/internal/forge"
 )
 
-func TestFetchUsesListedTag(t *testing.T) {
-	archive := testArchive(t, map[string]string{"app/README.md": "# App"})
-	var hits []string
-	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
-		hits = append(hits, r.URL.String())
-		if r.URL.Host == "api.github.com" {
-			body := `[{"name":"v6.6.3"},{"name":"v6.6.4"},{"name":"v6.6.5"}]`
-			return jsonResponse(r, body), nil
-		}
-		if strings.HasSuffix(r.URL.Path, "/archive/refs/tags/v6.6.4.tar.gz") {
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header), Request: r}, nil
-		}
-		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Header: make(http.Header), Request: r}, nil
-	})}
-	tree, err := Fetch(t.Context(), client, "https://github.com/greenart7c3/Amber", "6.6.4")
+func TestParseGitRefsUsesPeeledTag(t *testing.T) {
+	raw := []byte("aaa HEAD\nbbb refs/tags/v1.2.3\nccc refs/tags/v1.2.3^{}\nddd refs/tags/v1.0.0\n")
+	head, tags := parseGitRefs(raw)
+	if head != "aaa" || tags["v1.2.3"] != "ccc" || tags["v1.0.0"] != "ddd" {
+		t.Fatalf("head %s tags %v", head, tags)
+	}
+}
+
+func TestResolveClonesClosestTag(t *testing.T) {
+	bin := t.TempDir()
+	script := filepath.Join(bin, "git")
+	body := `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  printf '%s\n' "1111111111111111111111111111111111111111 HEAD" "2222222222222222222222222222222222222222 refs/tags/v6.6.4"
+  exit 0
+fi
+if [ "$1" = "clone" ]; then
+  dest=
+  branch=
+  prev=
+  for arg in "$@"; do
+    if [ "$prev" = "--branch" ]; then branch=$arg; fi
+    prev=$arg
+    dest=$arg
+  done
+  if [ "$branch" != "v6.6.4" ]; then
+    echo "branch $branch" >&2
+    exit 1
+  fi
+  mkdir -p "$dest"
+  echo '# App' > "$dest/README.md"
+  exit 0
+fi
+if [ "$1" = "-C" ]; then
+  echo 2222222222222222222222222222222222222222
+  exit 0
+fi
+echo "unexpected $*" >&2
+exit 1
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	rev, err := Resolve(t.Context(), "https://git.example/amber", "6.6.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Checkout(t.Context(), rev)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tree.Close()
-	want := "https://github.com/greenart7c3/Amber/archive/refs/tags/v6.6.4.tar.gz"
-	if tree.URL != want {
-		t.Fatalf("url %s", tree.URL)
+	if tree.Commit != "2222222222222222222222222222222222222222" || !strings.Contains(tree.URL, "@v6.6.4") {
+		t.Fatalf("%+v", tree)
 	}
-	if len(hits) != 2 || !strings.Contains(hits[0], "/repos/greenart7c3/Amber/tags") || hits[1] != want {
-		t.Fatalf("hits %v", hits)
+	if README(tree) != "# App" {
+		t.Fatalf("readme %q", README(tree))
 	}
 }
 
@@ -67,7 +92,7 @@ func TestCheckoutReadsTaggedCommit(t *testing.T) {
 	git("add", "README.md")
 	git("commit", "-m", "init")
 	git("tag", "v1.2.3")
-	tree, err := checkout(t.Context(), forge.Resolved{Ref: "v1.2.3", CloneURLs: []string{origin}})
+	tree, err := Checkout(t.Context(), Revision{Remote: origin, Ref: "v1.2.3", Commit: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,78 +105,32 @@ func TestCheckoutReadsTaggedCommit(t *testing.T) {
 	}
 }
 
-func jsonResponse(r *http.Request, body string) *http.Response {
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(body)),
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Request:    r,
-	}
-}
-
-type roundTrip func(*http.Request) (*http.Response, error)
-
-func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func TestUnpackKeepsSourceSkipsJunk(t *testing.T) {
-	raw := testArchive(t, map[string]string{
-		"app-HEAD/ios/App.swift":                            "import UIKit",
-		"app-HEAD/node_modules/x/index.js":                  "module.exports=1",
-		"app-HEAD/android/app/src/main/AndroidManifest.xml": `<manifest><uses-permission android:name="android.permission.RECEIVE_SMS"/></manifest>`,
-		"app-HEAD/lib/hidden/exfil.dart":                    "void leak() { HttpURLConnection; }",
-		"app-HEAD/README.md":                                "# App",
-		"app-HEAD/pubspec.yaml":                             "name: calc\n",
-	})
+func TestPruneCheckoutDropsJunk(t *testing.T) {
 	dir := t.TempDir()
-	n, _, err := unpack(raw, dir)
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("README.md", "# App")
+	write("lib/hidden/exfil.dart", "void leak() {}")
+	write("node_modules/x/index.js", "module.exports=1")
+	n, _, err := pruneCheckout(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 5 {
+	if n != 2 {
 		t.Fatalf("files %d", n)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "lib/hidden/exfil.dart")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "node_modules/x/index.js")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "node_modules/x/index.js")); !os.IsNotExist(err) {
 		t.Fatal("kept node_modules")
 	}
-}
-
-func TestBriefListsRoot(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "android"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got := Brief(&Tree{Dir: dir, Files: 2})
-	if !strings.Contains(got, "2 text files") || !strings.Contains(got, "android/") || !strings.Contains(got, "README.md") {
-		t.Fatal(got)
-	}
-}
-
-func testArchive(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(zw)
-	zero := time.Unix(0, 0).UTC()
-	for name, body := range files {
-		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), ModTime: zero}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
 }

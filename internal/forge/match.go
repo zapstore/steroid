@@ -1,3 +1,4 @@
+// Package forge picks the git tag closest to a version.
 package forge
 
 import (
@@ -46,6 +47,30 @@ func Closest(version string, tags []string) (string, bool) {
 		}
 	}
 	return best, best != ""
+}
+
+// directRefs is the version and its v-prefixed or unprefixed twin.
+func directRefs(version string) []string {
+	version = strings.TrimSpace(version)
+	var out []string
+	add := func(ref string) {
+		if !safeRef(ref) {
+			return
+		}
+		for _, have := range out {
+			if have == ref {
+				return
+			}
+		}
+		out = append(out, ref)
+	}
+	add(version)
+	if strings.HasPrefix(version, "v") || strings.HasPrefix(version, "V") {
+		add(version[1:])
+	} else if version != "" {
+		add("v" + version)
+	}
+	return out
 }
 
 func exactTag(version string, tags []string) (string, bool) {

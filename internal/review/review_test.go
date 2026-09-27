@@ -77,7 +77,7 @@ func TestRunOneTurnKeepsCitedWarning(t *testing.T) {
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "", nil)
+	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

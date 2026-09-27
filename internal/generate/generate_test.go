@@ -2,6 +2,7 @@ package generate
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,17 +12,21 @@ import (
 	"github.com/zapstore/steroid/internal/scan"
 )
 
-func TestChatWritesDebug(t *testing.T) {
+func TestChatSendsMessages(t *testing.T) {
+	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
-	var buf strings.Builder
-	_, err := Chat(t.Context(), config.Config{
+	content, err := Chat(t.Context(), config.Config{
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-		Debug:       &buf,
 	}, srv.Client(), "m", []Message{
 		{Role: "system", Content: "system text"},
 		{Role: "user", Content: "user text"},
@@ -29,12 +34,15 @@ func TestChatWritesDebug(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := buf.String()
-	if !strings.Contains(got, "system text") || !strings.Contains(got, "user text") || !strings.Contains(got, `"about":"A map."`) {
-		t.Fatalf("%s", got)
+	if !strings.Contains(content, `"about":"A map."`) {
+		t.Fatalf("%s", content)
 	}
-	if strings.Contains(got, "Bearer") || strings.Contains(got, "\"k\"") {
-		t.Fatal("debug included the api key")
+	sent := string(body)
+	if !strings.Contains(sent, "system text") || !strings.Contains(sent, "user text") {
+		t.Fatalf("%s", sent)
+	}
+	if strings.Contains(sent, "Bearer") || strings.Contains(sent, "\"k\"") {
+		t.Fatal("request body included the api key")
 	}
 }
 
@@ -201,6 +209,21 @@ func TestAssessEmptySheetStillWrites(t *testing.T) {
 	}, srv.Client(), sampleInput().App, nil, "", "")
 	if err != nil || !strings.Contains(got.Summary, "calculator") {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestPriorLabelsStoredNotes(t *testing.T) {
+	if Prior("", "  ") != "" {
+		t.Fatal("empty notes")
+	}
+	aboutOnly := Prior("Sends messages.", "")
+	if aboutOnly != "About:\nSends messages.\n" {
+		t.Fatalf("about %q", aboutOnly)
+	}
+	both := Prior("Sends messages.", "Needs a server login.")
+	body := WithCurrent("Listing (untrusted):\nName: Chat\n", both)
+	if !strings.Contains(body, "Current store text (untrusted):\nAbout:\nSends messages.\n\nSecurity:\nNeeds a server login.") {
+		t.Fatalf("%s", body)
 	}
 }
 

@@ -18,9 +18,9 @@ func LoadEvents(ctx context.Context, dbPath, stackPubkey string) ([]nostr.Event,
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT id, pubkey, created_at, kind, tags, content, sig
 		FROM events
-		WHERE kind IN (?, ?, ?, ?)
+		WHERE kind IN (?, ?, ?, ?, ?)
 		   OR (kind = ? AND pubkey = ?)
-	`, events.KindApp, events.KindRelease, events.KindAsset, events.KindIdentityProof,
+	`, events.KindApp, events.KindRelease, events.KindAsset, events.KindIdentityProof, events.KindProfile,
 		events.KindStack, stackPubkey)
 	if err != nil {
 		return nil, fmt.Errorf("query catalog events: %w", err)
@@ -35,18 +35,4 @@ func LoadEvents(ctx context.Context, dbPath, stackPubkey string) ([]nostr.Event,
 		out = append(out, event)
 	}
 	return out, rows.Err()
-}
-
-// FindListing returns the current catalog listing for appID.
-func FindListing(ctx context.Context, dbPath, appID string) (Listing, error) {
-	raw, err := LoadEvents(ctx, dbPath, "")
-	if err != nil {
-		return Listing{}, err
-	}
-	for _, listing := range Resolve(raw, "").Listings {
-		if listing.AppID == appID {
-			return listing, nil
-		}
-	}
-	return Listing{}, fmt.Errorf("app %s is not a current listing", appID)
 }

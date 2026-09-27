@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ type Handler struct {
 	Stack  string
 	Signer Signer
 	Now    func() time.Time
+	Log    *slog.Logger
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +38,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	to, err := LatestSnap(h.Data)
 	if err != nil {
+		h.logErr(err)
 		http.Error(w, "failed to read catalog epoch", http.StatusInternalServerError)
 		return
 	}
@@ -53,10 +56,19 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := EnsureBundle(r.Context(), h.Data, from, to, h.Stack, h.Signer, now.Unix())
 	if err != nil {
+		h.logErr(err)
 		http.Error(w, "failed to build catalog update", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", MediaType)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		h.logErr(err)
+	}
+}
+
+func (h Handler) logErr(err error) {
+	if h.Log != nil && err != nil {
+		h.Log.Error("deltas", "error", err)
+	}
 }
