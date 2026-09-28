@@ -57,11 +57,10 @@ func site(in Input) string {
 
 // Overview calls the LLM. summary is the about text.
 // note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version, hash string, rows []scan.Row, prevAbout, prevSecurity string) (string, string, []byte, string, error) {
+func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version, hash string, rows []scan.Row, prevAbout, prevSecurity, prevFacts string) (string, string, []byte, string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", nil, "", err
 	}
-	current := generate.Prior(prevAbout, prevSecurity)
 	matched := false
 	if tree != nil && pkg != "" {
 		ok, _ := source.Compare(tree, pkg, version)
@@ -73,7 +72,7 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	}
 	var reviewErr error
 	if tree != nil {
-		gen, err := review.Run(ctx, cfg, client, tree, app, rows, current)
+		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts)
 		if err == nil {
 			about, security, facts, err := finish(gen, rows, app.License, matched, hash, pkg, version)
 			return about, security, facts, llmNote("review", gen.ProviderModel), err
@@ -85,10 +84,12 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 		src = source.Read(tree, scan.HasAPK(rows), source.Uses(rows)).Text
 	}
 	gen, err := generate.Run(ctx, cfg, client, generate.Input{
-		App:     app,
-		Source:  src,
-		Sheet:   rows,
-		Current: current,
+		App:       app,
+		Source:    src,
+		Sheet:     rows,
+		About:     prevAbout,
+		Security:  prevSecurity,
+		PrevFacts: prevFacts,
 	})
 	if err != nil {
 		if reviewErr != nil {
@@ -117,7 +118,7 @@ func finish(gen generate.Result, rows []scan.Row, license string, matched bool, 
 	facts := generate.AllowOpenSource(locked, license, matched)
 	rows = claims(rows, facts, matched, hash, pkg, version)
 	rows = justify(rows, gen.Reason)
-	security := generate.SecurityText(gen.Security, gen.Warnings)
+	security := strings.TrimSpace(gen.Security)
 	return gen.About, security, scan.CSV(rows), nil
 }
 
@@ -169,11 +170,7 @@ func analyze(file *apk.File) ([]scan.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	hash := ""
-	if file.APK != nil {
-		hash = file.APK.Hash
-	}
-	return scan.FromReport(report, hash), nil
+	return scan.FromReport(report, file.Hash), nil
 }
 
 // ModelConfig reads the embedder configuration and rejects a call with no provider.

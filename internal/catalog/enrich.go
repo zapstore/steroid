@@ -22,7 +22,7 @@ import (
 	"github.com/zapstore/steroid/internal/run"
 	"github.com/zapstore/steroid/internal/scan"
 	"github.com/zapstore/steroid/internal/source"
-	"github.com/zapstore/zsp"
+	"github.com/zapstore/zsp/icon"
 )
 
 const (
@@ -175,7 +175,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 		matched = ok
 	}
 	if w.About || (w.Security && tree != nil) {
-		summary, sec, factBytes, _, err := run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, in.APKHash, rows, prevAbout, prevSecurity)
+		summary, sec, factBytes, _, err := run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, in.APKHash, rows, prevAbout, prevSecurity, readText(dir, fileFacts))
 		if err != nil {
 			if w.About {
 				rep.fail("about", err)
@@ -262,7 +262,7 @@ func featureText(in run.Input, readme string) string {
 func openAPK(ctx context.Context, dir string, in run.Input) (*apk.File, error) {
 	path := filepath.Join(dir, fileAPK)
 	if sameFileHash(path, in.APKHash) {
-		return &apk.File{Path: path}, nil
+		return &apk.File{Path: path, Hash: strings.ToLower(strings.TrimSpace(in.APKHash))}, nil
 	}
 	file, err := apk.Fetch(ctx, in.URL, in.APKHash)
 	if err != nil {
@@ -275,11 +275,11 @@ func openAPK(ctx context.Context, dir string, in run.Input) (*apk.File, error) {
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
-	return &apk.File{Path: path}, nil
+	return &apk.File{Path: path, Hash: file.Hash}, nil
 }
 
 func iconFromAPK(path string) ([]byte, error) {
-	png, err := zsp.Icon(path)
+	png, err := icon.Icon(path)
 	if err != nil {
 		return nil, err
 	}

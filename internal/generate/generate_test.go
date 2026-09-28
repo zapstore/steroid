@@ -63,7 +63,21 @@ func TestRunSummary(t *testing.T) {
 		if req.Model != "test-model" {
 			t.Errorf("model %s", req.Model)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore is an open Android app store.\",\"security\":\"It installs packages.\",\"facts\":{\"ads\":\"no\"}}"}}]}`))
+		inner, err := json.Marshal(map[string]string{
+			"about":    "Zapstore is an open Android app store.",
+			"security": "It installs packages.",
+			"facts":    "\"fact\",\"value\",\"reason\",\"permissions\"\n\"ads\",\"no\",\"\",\"\"\n",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		outer, err := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]string{"content": string(inner)}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write(outer)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -138,14 +152,18 @@ func TestAssess(t *testing.T) {
 		if req.Reasoning.Effort != "none" {
 			t.Fatalf("reasoning %+v", req.Reasoning)
 		}
-		if len(req.Messages) < 2 || !strings.Contains(req.Messages[1].Content, "Can install other apps") {
-			t.Fatalf("record %v", req.Messages)
+		body := ""
+		if len(req.Messages) >= 2 {
+			body = req.Messages[1].Content
 		}
-		if !strings.Contains(req.Messages[1].Content, "android/") {
-			t.Fatalf("missing tarball listing %v", req.Messages)
+		if !strings.Contains(body, "Current:") || !strings.Contains(body, "Scan:") || !strings.Contains(body, "Listing:") || !strings.Contains(body, "Source:") {
+			t.Fatalf("record %s", body)
 		}
-		if strings.Contains(req.Messages[1].Content, "REQUEST_INSTALL") {
-			t.Fatalf("permission identifier %v", req.Messages)
+		if !strings.Contains(body, "android/") {
+			t.Fatalf("missing source %s", body)
+		}
+		if !strings.Contains(body, "\"request_install_packages\",\"yes\"") || !strings.Contains(body, "REQUEST_INSTALL_PACKAGES") {
+			t.Fatalf("scan csv %s", body)
 		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore is an open Android app store for sideloading releases.\",\"security\":\"It can install other apps, which is expected for a store.\"}"}}]}`))
 	}))
@@ -156,7 +174,7 @@ func TestAssess(t *testing.T) {
 		Model:       "m",
 	}, srv.Client(), sampleInput().App, []scan.Row{{
 		Fact: "request_install_packages", Value: "yes", Basis: "apk", Evidence: "REQUEST_INSTALL_PACKAGES",
-	}}, "12 text files\nandroid/\nlib/", "")
+	}}, "12 text files\nandroid/\nlib/", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +209,7 @@ func TestAssessIncludesWebsite(t *testing.T) {
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-	}, srv.Client(), app, nil, "", "")
+	}, srv.Client(), app, nil, "", "", "", "")
 	if err != nil || !strings.Contains(got.Summary, "publishes") {
 		t.Fatalf("%+v %v", got, err)
 	}
@@ -206,24 +224,29 @@ func TestAssessEmptySheetStillWrites(t *testing.T) {
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-	}, srv.Client(), sampleInput().App, nil, "", "")
+	}, srv.Client(), sampleInput().App, nil, "", "", "", "")
 	if err != nil || !strings.Contains(got.Summary, "calculator") {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
 
-func TestPriorLabelsStoredNotes(t *testing.T) {
-	if Prior("", "  ") != "" {
-		t.Fatal("empty notes")
+func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
+	app := App{Name: "Chat", Summary: "Sends messages.", Website: "https://chat.example"}
+	prev := "\"fact\",\"value\",\"reason\",\"permissions\"\n\"microphone\",\"yes\",\"the record button records audio\",\"RECORD_AUDIO\"\n"
+	body := Record(app, nil, "Uses:\n", "Sends messages.", "Needs a server login.", prev)
+	if !strings.Contains(body, "Current:\n") || !strings.Contains(body, `"about":"Sends messages."`) || !strings.Contains(body, "the record button records audio") {
+		t.Fatalf("current %s", body)
 	}
-	aboutOnly := Prior("Sends messages.", "")
-	if aboutOnly != "About:\nSends messages.\n" {
-		t.Fatalf("about %q", aboutOnly)
+	if !strings.Contains(body, "Scan:\n\"fact\",\"value\",\"reason\",\"permissions\"\n") || !strings.Contains(body, "Listing:\n# Chat\n") || !strings.Contains(body, "Website: https://chat.example") || !strings.Contains(body, "Source:\nUses:\n") {
+		t.Fatalf("blocks %s", body)
 	}
-	both := Prior("Sends messages.", "Needs a server login.")
-	body := WithCurrent("Listing (untrusted):\nName: Chat\n", both)
-	if !strings.Contains(body, "Current store text (untrusted):\nAbout:\nSends messages.\n\nSecurity:\nNeeds a server login.") {
-		t.Fatalf("%s", body)
+	facts, reasons, noChange, err := ParseSheet("no-change")
+	if err != nil || !noChange || facts.OfflineCapable != "" || len(reasons) != 0 {
+		t.Fatalf("sentinel %+v %v %v", facts, reasons, err)
+	}
+	notes, err := Reply("Kept.", "no-change", "no-change", prev, nil)
+	if err != nil || notes.Reason["microphone"] != "the record button records audio" {
+		t.Fatalf("%+v %v", notes, err)
 	}
 }
 

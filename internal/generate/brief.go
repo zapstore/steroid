@@ -9,10 +9,9 @@ import (
 
 // Facts is the closed checklist for Zapstore search. Values are yes, no, or unknown.
 type Facts struct {
-	GMS             string `json:"gms"`
+	GoogleServices  string `json:"google_services"`
 	Ads             string `json:"ads"`
 	Tracking        string `json:"tracking"`
-	FCM             string `json:"fcm"`
 	OfflineCapable  string `json:"offline_capable"`
 	AccountRequired string `json:"account_required"`
 	E2EE            string `json:"e2ee"`
@@ -29,10 +28,9 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 			out[key] = value
 		}
 	}
-	put("gms", f.GMS)
+	put("google_services", f.GoogleServices)
 	put("ads", f.Ads)
 	put("tracking", f.Tracking)
-	put("fcm", f.FCM)
 	put("offline_capable", f.OfflineCapable)
 	put("account_required", f.AccountRequired)
 	put("e2ee", f.E2EE)
@@ -43,10 +41,9 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 
 // Normalize keeps only yes, no, and unknown.
 func (f Facts) Normalize() Facts {
-	f.GMS = truth(f.GMS)
+	f.GoogleServices = truth(f.GoogleServices)
 	f.Ads = truth(f.Ads)
 	f.Tracking = truth(f.Tracking)
-	f.FCM = truth(f.FCM)
 	f.OfflineCapable = truth(f.OfflineCapable)
 	f.AccountRequired = truth(f.AccountRequired)
 	f.E2EE = truth(f.E2EE)
@@ -65,14 +62,12 @@ func Lock(f Facts, rows []scan.Row) Facts {
 			continue
 		}
 		switch row.Fact {
-		case "gms":
-			f.GMS = "yes"
+		case "google_services":
+			f.GoogleServices = "yes"
 		case "ads":
 			f.Ads = "yes"
 		case "tracking":
 			f.Tracking = "yes"
-		case "fcm":
-			f.FCM = "yes"
 		case "offline_capable":
 			f.OfflineCapable = "yes"
 		}

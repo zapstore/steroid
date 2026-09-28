@@ -13,8 +13,8 @@ import (
 	"github.com/zapstore/steroid/internal/source"
 )
 
-// Run sends the source digest once and returns the overview plus checked warnings.
-func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, current string) (generate.Result, error) {
+// Run sends the source digest once and returns the overview.
+func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, about, security, prevFacts string) (generate.Result, error) {
 	if tree == nil || tree.Dir == "" {
 		return generate.Result{}, fmt.Errorf("source tree required")
 	}
@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 		if model == "" {
 			continue
 		}
-		out, err := once(ctx, cfg, client, model, app, sheet, digest.Text, current)
+		out, err := once(ctx, cfg, client, model, app, sheet, digest.Text, about, security, prevFacts)
 		if err != nil {
 			last = err
 			continue
@@ -47,35 +47,31 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 	return generate.Result{}, fmt.Errorf("no model configured")
 }
 
-type reply struct {
-	About    string             `json:"about"`
-	Security string             `json:"security"`
-	Facts    generate.Facts     `json:"facts"`
-	Reason   map[string]string  `json:"reason"`
-	Warnings []generate.Warning `json:"warnings"`
-}
-
-func once(ctx context.Context, cfg config.Config, client *http.Client, model string, app generate.App, sheet []scan.Row, digest, current string) (generate.Result, error) {
-	var got reply
+func once(ctx context.Context, cfg config.Config, client *http.Client, model string, app generate.App, sheet []scan.Row, digest, about, security, prevFacts string) (generate.Result, error) {
+	var got generateReply
 	if _, err := generate.Chat(ctx, cfg, client, model, []generate.Message{
 		{Role: "system", Content: generate.Prompt},
-		{Role: "user", Content: generate.WithCurrent(generate.Record(app, sheet, digest), current)},
+		{Role: "user", Content: generate.Record(app, sheet, digest, about, security, prevFacts)},
 	}, &got); err != nil {
 		return generate.Result{}, err
 	}
-	about := strings.TrimSpace(got.About)
-	if about == "" {
-		return generate.Result{}, fmt.Errorf("%s: empty overview", model)
+	notes, err := generate.Reply(got.About, got.Security, got.Facts, prevFacts, sheet)
+	if err != nil {
+		return generate.Result{}, fmt.Errorf("%s: %w", model, err)
 	}
-	warnings := generate.KeepWarnings(got.Warnings, digest)
-	facts := got.Facts.Normalize()
 	return generate.Result{
-		About:         about,
-		Security:      strings.TrimSpace(got.Security),
-		Facts:         facts,
-		Reason:        got.Reason,
-		Warnings:      warnings,
-		Summary:       about,
+		About:         notes.About,
+		Security:      notes.Security,
+		Facts:         notes.Facts,
+		Reason:        notes.Reason,
+		Summary:       notes.About,
 		ProviderModel: model,
 	}, nil
+}
+
+// generateReply matches generate.modelReply. It is local because that type is not exported.
+type generateReply struct {
+	About    string `json:"about"`
+	Security string `json:"security"`
+	Facts    string `json:"facts"`
 }

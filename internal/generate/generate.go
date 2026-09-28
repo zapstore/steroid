@@ -4,6 +4,7 @@ package generate
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,6 +41,14 @@ type Result struct {
 	ProviderModel string            `json:"provider_model,omitempty"`
 }
 
+// modelReply is the JSON object the prompt asks for.
+// facts is a quoted CSV, or the no-change sentinel.
+type modelReply struct {
+	About    string `json:"about"`
+	Security string `json:"security"`
+	Facts    string `json:"facts"`
+}
+
 // App is the listing text passed to the model. It is untrusted.
 type App struct {
 	ID         string
@@ -52,13 +61,15 @@ type App struct {
 	License    string
 }
 
-// Input is the app text, the scan rows, and optional source text.
-// Current is the stored about and security text, labeled by Prior.
+// Input is one model call: the listing, this APK's scan rows, optional source,
+// and the notes stored from the previous run.
 type Input struct {
-	App     App
-	Source  string
-	Sheet   []scan.Row
-	Current string
+	App       App
+	Source    string
+	Sheet     []scan.Row
+	About     string
+	Security  string
+	PrevFacts string
 }
 
 // Run calls the provider with the scan sheet.
@@ -69,7 +80,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, in Input) 
 	if client == nil {
 		return Result{}, fmt.Errorf("http client required")
 	}
-	notes, err := Assess(ctx, cfg, client, in.App, in.Sheet, in.Source, in.Current)
+	notes, err := Assess(ctx, cfg, client, in.App, in.Sheet, in.Source, in.About, in.Security, in.PrevFacts)
 	if err != nil {
 		return Result{}, err
 	}
@@ -96,7 +107,7 @@ type Notes struct {
 }
 
 // Assess writes the app overview and the security note in one call.
-func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App, sheet []scan.Row, source, current string) (Notes, error) {
+func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App, sheet []scan.Row, source, about, security, prevFacts string) (Notes, error) {
 	if app.ID == "" && app.Name == "" && strings.TrimSpace(app.Content) == "" {
 		return Notes{}, fmt.Errorf("listing required")
 	}
@@ -109,33 +120,18 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 		if model == "" {
 			continue
 		}
-		var out struct {
-			About    string            `json:"about"`
-			Security string            `json:"security"`
-			Facts    Facts             `json:"facts"`
-			Reason   map[string]string `json:"reason"`
-			Warnings []Warning         `json:"warnings"`
-		}
-		if err := complete(ctx, cfg, client, model, Prompt, WithCurrent(Record(app, sheet, source), current), &out); err != nil {
+		var out modelReply
+		if err := complete(ctx, cfg, client, model, Prompt, Record(app, sheet, source, about, security, prevFacts), &out); err != nil {
 			last = err
 			continue
 		}
-		about := strings.TrimSpace(out.About)
-		if about == "" {
-			last = fmt.Errorf("%s: empty summary", model)
+		notes, err := Reply(out.About, out.Security, out.Facts, prevFacts, sheet)
+		if err != nil {
+			last = fmt.Errorf("%s: %w", model, err)
 			continue
 		}
-		warnings := KeepWarnings(out.Warnings, source)
-		facts := Lock(out.Facts, sheet)
-		return Notes{
-			About:         about,
-			Security:      strings.TrimSpace(out.Security),
-			Facts:         facts,
-			Reason:        out.Reason,
-			Warnings:      warnings,
-			Summary:       about,
-			ProviderModel: model,
-		}, nil
+		notes.ProviderModel = model
+		return notes, nil
 	}
 	if last != nil {
 		return Notes{}, last
@@ -143,70 +139,162 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 	return Notes{}, fmt.Errorf("no model configured")
 }
 
-// Record is the user message. Description and source text are untrusted.
-func Record(app App, sheet []scan.Row, source string) string {
+// Record is the user message: current notes, this scan, the listing, then source.
+func Record(app App, sheet []scan.Row, source, about, security, prevFacts string) string {
 	var b strings.Builder
-	b.WriteString("Listing (untrusted):\n")
-	writeLine(&b, "App ID", app.ID)
-	writeLine(&b, "Name", app.Name)
-	writeLine(&b, "Purpose", app.Summary)
+	b.WriteString("Current:\n")
+	raw, err := json.Marshal(struct {
+		About    string `json:"about"`
+		Security string `json:"security"`
+		Facts    string `json:"facts"`
+	}{
+		About:    strings.TrimSpace(about),
+		Security: strings.TrimSpace(security),
+		Facts:    strings.TrimSpace(prevFacts),
+	})
+	if err != nil {
+		raw = []byte(`{"about":"","security":"","facts":""}`)
+	}
+	b.Write(raw)
+	b.WriteString("\n\nScan:\n")
+	if csvText := scan.CSV(sheet); len(csvText) > 0 {
+		b.Write(csvText)
+	} else {
+		b.WriteString("\"fact\",\"value\",\"reason\",\"permissions\"\n")
+	}
+	b.WriteString("\nListing:\n")
+	writeListing(&b, app)
+	if src := strings.TrimSpace(source); src != "" {
+		b.WriteString("\nSource:\n")
+		b.WriteString(src)
+		if !strings.HasSuffix(src, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+func writeListing(b *strings.Builder, app App) {
+	name := strings.TrimSpace(app.Name)
+	if name == "" {
+		name = strings.TrimSpace(app.ID)
+	}
+	if name != "" {
+		b.WriteString("# ")
+		b.WriteString(name)
+		b.WriteByte('\n')
+	}
+	if s := strings.TrimSpace(app.Summary); s != "" {
+		b.WriteByte('\n')
+		b.WriteString(s)
+		b.WriteByte('\n')
+	}
 	if c := strings.TrimSpace(app.Content); c != "" {
-		b.WriteString("Description: ")
+		b.WriteByte('\n')
 		b.WriteString(clipTo(c, maxDescription))
 		b.WriteByte('\n')
 	}
 	if len(app.Tags) > 0 {
-		writeLine(&b, "Tags", strings.Join(app.Tags, ", "))
+		writeLine(b, "Tags", strings.Join(app.Tags, ", "))
 	}
-	writeLine(&b, "Website", app.Website)
-	writeLine(&b, "License", app.License)
-	writeLine(&b, "Repository", app.Repository)
-	b.WriteString("\nFacts:\n")
-	if text := scan.Prose(sheet); text != "" {
-		b.WriteString(text)
-	} else {
-		b.WriteString("(none)\n")
-	}
-	if src := strings.TrimSpace(source); src != "" {
-		b.WriteString("\nSource digest:\n")
-		b.WriteString(src)
-		b.WriteByte('\n')
-	}
-	return b.String()
+	writeLine(b, "Website", app.Website)
+	writeLine(b, "License", app.License)
+	writeLine(b, "Repository", app.Repository)
 }
 
-// Prior labels the stored about and security notes for the user message.
-// An empty note is left out. Both empty returns an empty string.
-func Prior(about, security string) string {
+// Reply reads the model object. A no-change facts sheet keeps the previous CSV.
+func Reply(about, security, factsCSV, prevFacts string, sheet []scan.Row) (Notes, error) {
 	about = strings.TrimSpace(about)
-	security = strings.TrimSpace(security)
-	if about == "" && security == "" {
-		return ""
+	if about == "" {
+		return Notes{}, fmt.Errorf("empty summary")
 	}
-	var b strings.Builder
-	if about != "" {
-		b.WriteString("About:\n")
-		b.WriteString(about)
-		b.WriteByte('\n')
+	facts, reasons, noChange, err := ParseSheet(factsCSV)
+	if err != nil {
+		return Notes{}, err
 	}
-	if security != "" {
-		if b.Len() > 0 {
-			b.WriteByte('\n')
+	if noChange {
+		facts, reasons, _, err = ParseSheet(prevFacts)
+		if err != nil {
+			return Notes{}, err
 		}
-		b.WriteString("Security:\n")
-		b.WriteString(security)
-		b.WriteByte('\n')
 	}
-	return b.String()
+	return Notes{
+		About:    about,
+		Security: strings.TrimSpace(security),
+		Facts:    Lock(facts, sheet),
+		Reason:   reasons,
+		Summary:  about,
+	}, nil
 }
 
-// WithCurrent appends the stored about and security text so the model can check it.
-func WithCurrent(body, current string) string {
-	current = strings.TrimSpace(current)
-	if current == "" {
-		return body
+// ParseSheet reads a facts CSV. The bool is true when the text is the no-change sentinel.
+func ParseSheet(raw string) (Facts, map[string]string, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return Facts{}, nil, false, nil
 	}
-	return body + "\nCurrent store text (untrusted):\n" + current + "\n"
+	if strings.EqualFold(raw, "no-change") {
+		return Facts{}, nil, true, nil
+	}
+	r := csv.NewReader(strings.NewReader(raw))
+	r.FieldsPerRecord = -1
+	rows, err := r.ReadAll()
+	if err != nil {
+		return Facts{}, nil, false, fmt.Errorf("facts csv: %w", err)
+	}
+	if len(rows) == 0 {
+		return Facts{}, nil, false, nil
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[strings.TrimSpace(name)] = i
+	}
+	factI, okFact := col["fact"]
+	valueI, okValue := col["value"]
+	if !okFact || !okValue {
+		return Facts{}, nil, false, fmt.Errorf("facts csv: missing columns")
+	}
+	reasonI, okReason := col["reason"]
+	var facts Facts
+	reasons := map[string]string{}
+	for _, row := range rows[1:] {
+		if factI >= len(row) || valueI >= len(row) {
+			continue
+		}
+		fact := strings.TrimSpace(row[factI])
+		value := truth(row[valueI])
+		if fact == "" || (value != "yes" && value != "no") {
+			continue
+		}
+		setFact(&facts, fact, value)
+		if okReason && reasonI < len(row) {
+			if text := strings.TrimSpace(row[reasonI]); text != "" {
+				reasons[fact] = text
+			}
+		}
+	}
+	return facts, reasons, false, nil
+}
+
+func setFact(f *Facts, fact, value string) {
+	switch fact {
+	case "google_services":
+		f.GoogleServices = value
+	case "ads":
+		f.Ads = value
+	case "tracking":
+		f.Tracking = value
+	case "offline_capable":
+		f.OfflineCapable = value
+	case "account_required":
+		f.AccountRequired = value
+	case "e2ee":
+		f.E2EE = value
+	case "open_source":
+		f.OpenSource = value
+	case "self_hostable":
+		f.SelfHostable = value
+	}
 }
 
 func writeLine(b *strings.Builder, label, value string) {

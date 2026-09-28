@@ -1,55 +1,71 @@
-// Package apk downloads and verifies an APK through the ZSP library.
+// Package apk downloads an APK and checks its SHA-256.
 package apk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strings"
-
-	"github.com/zapstore/zsp"
 )
 
-// File is a verified APK on disk. The caller must Close it.
+// File is an APK on disk. Close deletes a file this package downloaded.
 type File struct {
-	APK  *zsp.APK
-	Path string
+	Path   string
+	Hash   string
+	remove bool
 }
 
-// Close releases the verified APK and deletes a ZSP-managed download.
+// Close deletes a downloaded APK. A copied or cached file is left in place.
 func (f *File) Close() error {
-	if f == nil || f.APK == nil {
+	if f == nil || !f.remove {
 		return nil
 	}
-	return f.APK.Close()
+	f.remove = false
+	return os.Remove(f.Path)
 }
 
-// Fetch downloads rawURL with zsp.Fetch and checks it against wantHash.
+// Fetch downloads rawURL and checks it against wantHash.
+// An empty wantHash skips the check. The caller must Close the file.
 func Fetch(ctx context.Context, rawURL, wantHash string) (*File, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return nil, fmt.Errorf("apk url missing")
 	}
-	candidates, err := zsp.Fetch(ctx, zsp.FetchConfig{
-		ReleaseSource: &zsp.ReleaseSource{URL: rawURL, AssetURL: rawURL},
-	}, zsp.FetchOptions{SkipHTTPCache: true})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("zsp: no apk")
-	}
-	got := candidates[0]
-	for _, extra := range candidates[1:] {
-		_ = extra.Close()
-	}
-	if want := strings.ToLower(strings.TrimSpace(wantHash)); want != "" && !strings.EqualFold(got.Hash, want) {
-		_ = got.Close()
-		return nil, fmt.Errorf("apk hash %s != %s", got.Hash, want)
-	}
-	path, err := got.Path()
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		_ = got.Close()
 		return nil, err
 	}
-	return &File{APK: got, Path: path}, nil
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("apk returned %s", res.Status)
+	}
+	tmp, err := os.CreateTemp("", "steroid-apk-*.apk")
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.New()
+	if _, err := io.Copy(tmp, io.TeeReader(res.Body, sum)); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return nil, err
+	}
+	got := hex.EncodeToString(sum.Sum(nil))
+	file := &File{Path: tmp.Name(), Hash: got, remove: true}
+	if want := strings.ToLower(strings.TrimSpace(wantHash)); want != "" && got != want {
+		_ = file.Close()
+		return nil, fmt.Errorf("apk hash %s != %s", got, want)
+	}
+	return file, nil
 }

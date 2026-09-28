@@ -28,12 +28,12 @@ func TestSecurityLeadsWithWarning(t *testing.T) {
 }
 
 func TestLockKeepsScannerYes(t *testing.T) {
-	got := Lock(Facts{GMS: "no", Ads: "no", OfflineCapable: "no"}, []scan.Row{
-		{Fact: "gms", Value: "yes", Basis: "apk"},
+	got := Lock(Facts{GoogleServices: "no", Ads: "no", OfflineCapable: "no"}, []scan.Row{
+		{Fact: "google_services", Value: "yes", Basis: "apk"},
 		{Fact: "ads", Value: "yes", Basis: "apk"},
 		{Fact: "offline_capable", Value: "yes", Basis: "apk"},
 	})
-	if got.GMS != "yes" || got.Ads != "yes" || got.OfflineCapable != "yes" || got.OpenSource != "unknown" {
+	if got.GoogleServices != "yes" || got.Ads != "yes" || got.OfflineCapable != "yes" || got.OpenSource != "unknown" {
 		t.Fatalf("%+v", got)
 	}
 	if claimed := Lock(Facts{OfflineCapable: "yes"}, nil); claimed.OfflineCapable != "yes" {
@@ -42,11 +42,11 @@ func TestLockKeepsScannerYes(t *testing.T) {
 }
 
 func TestFactsJSONOmitsUnknown(t *testing.T) {
-	raw, err := json.Marshal(Facts{GMS: "no", Ads: "unknown", OpenSource: "yes"})
+	raw, err := json.Marshal(Facts{GoogleServices: "no", Ads: "unknown", OpenSource: "yes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != `{"gms":"no","open_source":"yes"}` {
+	if string(raw) != `{"google_services":"no","open_source":"yes"}` {
 		t.Fatalf("%s", raw)
 	}
 	raw, err = json.Marshal(Facts{})

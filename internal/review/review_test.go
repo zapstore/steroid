@@ -63,11 +63,7 @@ func TestRunOneTurnKeepsCitedWarning(t *testing.T) {
 		reply := `{
 			"about":"Calc is an offline calculator.",
 			"security":"The source reaches the network and can receive SMS.",
-			"facts":{"offline_capable":"yes"},
-			"warnings":[
-				{"id":"sms_exfil","text":"A calculator receives SMS.","evidence":"lib/exfil.dart:1: void leak() { HttpURLConnection; }"},
-				{"id":"invented","text":"Reads the camera.","evidence":"missing/nope.dart:3: Camera.open"}
-			]
+			"facts":"\"fact\",\"value\",\"reason\",\"permissions\"\n\"offline_capable\",\"yes\",\"\",\"\"\n\"sms\",\"yes\",\"the inbox screen reads messages\",\"RECEIVE_SMS\"\n"
 		}`
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + jsonString(reply) + `}}]}`))
 	}))
@@ -77,24 +73,23 @@ func TestRunOneTurnKeepsCitedWarning(t *testing.T) {
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "")
+	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatalf("calls %d", calls)
 	}
-	warns := generate.WarningsText(got.Warnings)
-	if got.About != "Calc is an offline calculator." || !strings.HasPrefix(warns, "⚠️ A calculator receives SMS.") || !strings.Contains(got.Security, "can receive SMS.") {
-		t.Fatalf("about %q security %q warnings %q", got.About, got.Security, warns)
+	if got.About != "Calc is an offline calculator." || !strings.Contains(got.Security, "can receive SMS.") {
+		t.Fatalf("about %q security %q", got.About, got.Security)
 	}
-	if strings.Contains(got.About, "Works offline") || strings.Contains(got.Security, "Works offline") || strings.Contains(warns, "can receive SMS.") {
-		t.Fatalf("facts leaked or warning repeated about %q security %q warnings %q", got.About, got.Security, warns)
+	if strings.Contains(got.About, "Works offline") || strings.Contains(got.Security, "Works offline") {
+		t.Fatalf("facts leaked about %q security %q", got.About, got.Security)
 	}
-	if got.Facts.OfflineCapable != "yes" {
-		t.Fatalf("facts %+v", got.Facts)
+	if got.Facts.OfflineCapable != "yes" || got.Reason["sms"] != "the inbox screen reads messages" {
+		t.Fatalf("facts %+v reason %+v", got.Facts, got.Reason)
 	}
-	if len(got.Warnings) != 1 || got.Warnings[0].ID != "sms_exfil" {
+	if len(got.Warnings) != 0 {
 		t.Fatalf("warnings %+v", got.Warnings)
 	}
 }
