@@ -8,11 +8,11 @@ import (
 
 func TestFacts(t *testing.T) {
 	got := Facts([]scan.Row{
-		{Fact: "gms", Value: "no"},
+		{Fact: "google_services", Value: "no"},
 		{Fact: "skip", Value: "maybe"},
-		{Fact: "fcm", Value: "yes"},
+		{Fact: "tracking", Value: "yes"},
 	})
-	if got != "gms: no\nfcm: yes" {
+	if got != "google_services: no\ntracking: yes" {
 		t.Fatalf("%q", got)
 	}
 }

@@ -60,10 +60,10 @@ func FromReport(rep detect.Report, hash string) []Row {
 			note("ads", label)
 		}
 		if googlePlay(lib) {
-			note("gms", label)
+			note("google_services", "Google Play services: "+label)
 		}
 		if firebaseMessaging(lib) {
-			note("fcm", label)
+			note("google_services", "Firebase Cloud Messaging: "+label)
 		}
 	}
 	for _, fact := range libOrder {
@@ -77,12 +77,8 @@ func FromReport(rep detect.Report, hash string) []Row {
 	}
 	// A finished library scan that did not find these SDKs is a no.
 	// Ads and tracking stay absent: the corpus does not cover every network.
-	if !found["gms"] {
-		add("gms", "")
-		rows[len(rows)-1].Value = "no"
-	}
-	if !found["fcm"] {
-		add("fcm", "")
+	if !found["google_services"] {
+		add("google_services", "")
 		rows[len(rows)-1].Value = "no"
 	}
 	if rep.Manifest {
@@ -161,7 +157,7 @@ func needsReason(fact string) bool {
 		"request_install_packages", "query_all_packages", "system_alert_window",
 		"accessibility_service", "notification_listener", "device_admin",
 		"vpn_service", "input_method", "usage_stats",
-		"fcm", "tracking", "ads", "gms":
+		"tracking", "ads", "google_services":
 		return true
 	default:
 		return false

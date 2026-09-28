@@ -2,7 +2,6 @@ package scan
 
 import (
 	"bytes"
-	"encoding/csv"
 	"strings"
 )
 
@@ -13,7 +12,7 @@ func Prose(rows []Row) string {
 		if row.Basis != "apk" {
 			continue
 		}
-		if row.Value == "no" && (row.Fact == "gms" || row.Fact == "fcm") {
+		if row.Value == "no" && row.Fact == "google_services" {
 			b.WriteString("- ")
 			b.WriteString(row.Fact)
 			b.WriteString(": no\n")
@@ -42,10 +41,8 @@ func Describe(row Row) string {
 		return withEvidence("Includes a tracker", row.Evidence)
 	case "ads":
 		return withEvidence("Includes ads", row.Evidence)
-	case "gms":
-		return withEvidence("Includes Google Play services", row.Evidence)
-	case "fcm":
-		return withEvidence("Includes Firebase Cloud Messaging", row.Evidence)
+	case "google_services":
+		return withEvidence("Includes Google services", row.Evidence)
 	case "offline_capable":
 		return "No network permission"
 	case "contacts":
@@ -83,9 +80,8 @@ func Describe(row Row) string {
 	}
 }
 
-// ReasonText joins the model's phrase and scanner findings not already named there.
-// A permission id is included only after a purpose, and only when it is not the fact itself.
-// "request_install_packages" does not gain "REQUEST_INSTALL_PACKAGES permission".
+// ReasonText is the model's phrase plus scanner findings that are not permissions.
+// Permission ids belong in Permissions.
 func ReasonText(row Row) string {
 	perms, other := splitEvidence(row.Evidence)
 	phrase := strings.TrimSpace(row.Reason)
@@ -93,15 +89,6 @@ func ReasonText(row Row) string {
 		phrase = ""
 	}
 	var extra []string
-	if phrase != "" {
-		low := strings.ToLower(phrase)
-		for _, id := range perms {
-			if strings.EqualFold(id, row.Fact) || strings.Contains(low, strings.ToLower(id)) {
-				continue
-			}
-			extra = append(extra, id+" permission")
-		}
-	}
 	low := strings.ToLower(phrase)
 	for _, part := range other {
 		if phrase != "" && strings.Contains(low, strings.ToLower(part)) {
@@ -117,6 +104,12 @@ func ReasonText(row Row) string {
 	default:
 		return phrase + ", " + strings.Join(extra, ", ")
 	}
+}
+
+// Permissions is the comma-separated permission ids for a fact.
+func Permissions(row Row) string {
+	perms, _ := splitEvidence(row.Evidence)
+	return strings.Join(perms, ",")
 }
 
 func splitEvidence(evidence string) (perms, other []string) {
@@ -168,23 +161,31 @@ func withEvidence(label, evidence string) string {
 	return label + ": " + evidence
 }
 
-// CSV encodes fact rows as fact,value,reason. An empty sheet returns nil.
-// A permission id is included only when the reason already says what it is for.
+// CSV encodes fact rows as fact,value,reason,permissions.
+// Every field is quoted, so the permissions column can hold comma-separated ids.
+// An empty sheet returns nil.
 func CSV(rows []Row) []byte {
 	if len(rows) == 0 {
 		return nil
 	}
 	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
-	_ = w.Write([]string{"fact", "value", "reason"})
+	writeRecord(&buf, "fact", "value", "reason", "permissions")
 	for _, row := range onePerFact(rows) {
-		_ = w.Write([]string{row.Fact, row.Value, ReasonText(row)})
-	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return nil
+		writeRecord(&buf, row.Fact, row.Value, ReasonText(row), Permissions(row))
 	}
 	return buf.Bytes()
+}
+
+func writeRecord(buf *bytes.Buffer, fields ...string) {
+	for i, field := range fields {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteByte('"')
+		buf.WriteString(strings.ReplaceAll(field, `"`, `""`))
+		buf.WriteByte('"')
+	}
+	buf.WriteByte('\n')
 }
 
 // HasInternet reports whether the APK declared android.permission.INTERNET.
