@@ -28,11 +28,15 @@ type Library struct {
 
 // Report is the privacy and security sheet for one APK.
 type Report struct {
+	Package              string
 	Libraries            []Library
 	LibraryCount         int
 	AntiFeatures         []string
 	DangerousPermissions []string
 	Permissions          []string
+	Components           []string
+	Native               []string
+	Hosts                []string
 	Manifest             bool
 }
 
@@ -44,11 +48,15 @@ func Analyze(apkPath string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	comps, perms, manifestOK := manifestSignals(apkPath)
+	comps, perms, pkg, manifestOK := manifestSignals(apkPath)
 	sos := nativeNames(apkPath)
 	rep := idx.report(classes, comps, sos, perms)
+	rep.Package = pkg
 	rep.Manifest = manifestOK
 	rep.Permissions = append([]string(nil), perms...)
+	rep.Components = append([]string(nil), comps...)
+	rep.Native = append([]string(nil), sos...)
+	rep.Hosts = hostsFromAPK(apkPath)
 	return rep, nil
 }
 
@@ -353,13 +361,13 @@ var knownSO = map[string]Library{
 	"libsqlcipher.so":      {Name: "SQLCipher", Type: "Utility"},
 }
 
-func manifestSignals(apkPath string) (components, perms []string, ok bool) {
+func manifestSignals(apkPath string) (components, perms []string, pkg string, ok bool) {
 	c := &signalCollector{}
 	zipErr, _, manifestErr := apkparser.ParseApk(apkPath, c)
 	if zipErr != nil || manifestErr != nil {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
-	return c.components, c.perms, true
+	return c.components, c.perms, c.pkg, true
 }
 
 type signalCollector struct {

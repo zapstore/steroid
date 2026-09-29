@@ -8,6 +8,30 @@ import (
 
 // classPaths returns slash paths for classes defined in one DEX file.
 // A descriptor Lcom/example/App; becomes /com/example/App.
+func dexStrings(dex []byte) []string {
+	if len(dex) < 112 || string(dex[:4]) != "dex\n" {
+		return nil
+	}
+	stringN := int(u32(dex, 56))
+	stringOff := int(u32(dex, 60))
+	if stringN < 0 || stringOff < 0 {
+		return nil
+	}
+	out := make([]string, 0, 64)
+	for i := 0; i < stringN; i++ {
+		off := stringOff + i*4
+		if off < 0 || off+4 > len(dex) {
+			break
+		}
+		s, err := mutf8(dex, int(u32(dex, off)))
+		if err != nil || s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 func classPaths(dex []byte) ([]string, error) {
 	if len(dex) < 112 || string(dex[:4]) != "dex\n" {
 		return nil, fmt.Errorf("not a dex file")
