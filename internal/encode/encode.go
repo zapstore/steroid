@@ -41,34 +41,48 @@ func VectorKey(document string) [32]byte {
 	return out
 }
 
+// Embed tokenizes text, runs mdbr-leaf-ir, and returns the L2-normalized vector.
+func Embed(ctx context.Context, modelDir, text string) ([]float32, error) {
+	vec, _, err := projectText(ctx, modelDir, text)
+	return vec, err
+}
+
 // Document tokenizes text, runs mdbr-leaf-ir, and quantizes to int8.
 func Document(ctx context.Context, modelDir, text string) (Result, error) {
-	if err := ctx.Err(); err != nil {
+	out, n, err := projectText(ctx, modelDir, text)
+	if err != nil {
 		return Result{}, err
+	}
+	return Result{Model: Identity, Tokens: n, Dims: outDim, Vector: quantize(out)}, nil
+}
+
+func projectText(ctx context.Context, modelDir, text string) ([]float32, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
 	}
 	if text == "" {
-		return Result{}, fmt.Errorf("empty document")
+		return nil, 0, fmt.Errorf("empty document")
 	}
 	if modelDir == "" {
-		return Result{}, fmt.Errorf("model dir required")
+		return nil, 0, fmt.Errorf("model dir required")
 	}
 	if err := ensureDir(ctx, modelDir); err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	lib, err := ensureORT(ctx, filepath.Dir(modelDir))
 	if err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	if err := startORT(lib); err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	v, err := loadVocab(filepath.Join(modelDir, "vocab.txt"))
 	if err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	weight, bias, err := loadDense(filepath.Join(modelDir, "dense.safetensors"))
 	if err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	ids := v.encode(text)
 	n := len(ids)
@@ -79,12 +93,12 @@ func Document(ctx context.Context, modelDir, text string) (Result, error) {
 	}
 	hidden, err := infer(filepath.Join(modelDir, "model_quantized.onnx"), ids, mask, types)
 	if err != nil {
-		return Result{}, err
+		return nil, 0, err
 	}
 	pooled := meanPool(hidden, n, hiddenDim, mask)
 	out := project(pooled, weight, bias, hiddenDim, outDim)
 	l2(out)
-	return Result{Model: Identity, Tokens: n, Dims: outDim, Vector: quantize(out)}, nil
+	return out, n, nil
 }
 
 func startORT(lib string) error {
