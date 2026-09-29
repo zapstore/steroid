@@ -163,6 +163,67 @@ func TestLargeBundleManifestFitsBunker(t *testing.T) {
 	}
 }
 
+func TestBundleOmitsUnchangedNotes(t *testing.T) {
+	data := t.TempDir()
+	signer, err := ParseSigner("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "com.example.maps"
+	dir := AppDir(data, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	about := []byte("Offline wallet.\n")
+	security := []byte("The cards stay on the phone.\n")
+	facts := []byte("\"fact\",\"value\",\"notes\"\n")
+	for name, body := range map[string][]byte{
+		"about": about, "security": security, "facts": facts, "vector": []byte("vec"),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	diff := Diff{Apps: []string{id}}
+	first, err := BuildBundle(t.Context(), data, 0, 1, 10, diff, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(BundleDir(data), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(BundlePath(data, 0, 1), first, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildBundle(t.Context(), data, 1, 2, 20, diff, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := tarFiles(t, second)
+	for _, name := range []string{id + "/about", id + "/security", id + "/facts"} {
+		if _, ok := files[name]; ok {
+			t.Fatalf("unchanged %s was sent again", name)
+		}
+	}
+	if _, ok := files[id+"/vector"]; !ok {
+		t.Fatal("vector should still be sent")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "about"), []byte("Offline wallet for loyalty cards.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	third, err := BuildBundle(t.Context(), data, 1, 2, 30, diff, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := tarFiles(t, third)
+	if string(changed[id+"/about"]) != "Offline wallet for loyalty cards.\n" {
+		t.Fatalf("changed about missing: %q", changed[id+"/about"])
+	}
+	if _, ok := changed[id+"/security"]; ok {
+		t.Fatal("unchanged security was sent with the new about")
+	}
+}
+
 func tarFiles(t *testing.T, body []byte) map[string][]byte {
 	t.Helper()
 	zr, err := zstd.NewReader(bytes.NewReader(body))
