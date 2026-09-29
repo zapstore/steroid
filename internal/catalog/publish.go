@@ -12,7 +12,7 @@ import (
 )
 
 // Publish stores snapshot n+1 and the adjacent bundle. Identical state does nothing.
-// filter adds those apps' artifact files to the bundle even when their events are unchanged.
+// filter keeps the diff to apps whose id contains it, including their artifact files when the events are unchanged.
 // matchAPK includes an app's artifact files only when its cache apk line equals the listing asset hash.
 func Publish(ctx context.Context, data string, next State, signer Signer, sealedAt int64, filter string, matchAPK bool) (int64, error) {
 	if err := os.MkdirAll(SnapDir(data), 0o755); err != nil {
@@ -34,22 +34,19 @@ func Publish(ctx context.Context, data string, next State, signer Signer, sealed
 		prev = Resolve(prevEvents, signer.PubKey)
 	}
 	diff := Compare(prev, next)
+	diff.Avatars = pictureAvatars(data, prev.Profiles, next.Profiles)
+	if latest == 0 {
+		diff.Apps = appIDs(next)
+		diff.Avatars = pictureAvatars(data, nil, next.Profiles)
+	}
 	if filter != "" {
-		diff.Apps = includeMatching(diff.Apps, next, filter)
+		diff = onlyMatching(diff, next, filter)
 	}
 	if matchAPK {
 		diff.Apps = appsMatchingAPK(data, next, diff.Apps)
 	}
-	diff.Avatars = pictureAvatars(data, prev.Profiles, next.Profiles)
 	if latest > 0 && len(diff.Events) == 0 && len(diff.AppDeletes) == 0 && len(diff.Coords) == 0 && len(diff.Apps) == 0 && len(diff.Avatars) == 0 {
 		return latest, nil
-	}
-	if latest == 0 {
-		diff.Apps = appIDs(next)
-		if matchAPK {
-			diff.Apps = appsMatchingAPK(data, next, diff.Apps)
-		}
-		diff.Avatars = pictureAvatars(data, nil, next.Profiles)
 	}
 	nextN := latest + 1
 	body, err := BuildBundle(ctx, data, latest, nextN, sealedAt, diff, signer)

@@ -36,7 +36,7 @@ func TestPublishMatchAPKOmitsStaleArtifacts(t *testing.T) {
 	}
 	writeCache(t, data, "com.example.match", memo{Version: enrichVersion, APK: strings.ToUpper(current)})
 	writeCache(t, data, "com.example.stale", memo{Version: enrichVersion, APK: previous})
-	writeCache(t, data, "com.example.oldcache", memo{Version: 1, APK: current})
+	writeCache(t, data, "com.example.oldcache", memo{Version: 0, APK: current})
 	writeCache(t, data, "com.example.nohash", memo{Version: enrichVersion, APK: ""})
 
 	n, err := Publish(t.Context(), data, next, signer, 10, "", true)
@@ -63,6 +63,46 @@ func TestPublishMatchAPKOmitsStaleArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(files["diff.jsonl"]), "com.example.stale-asset") {
 		t.Fatalf("stale app events missing: %s", files["diff.jsonl"])
+	}
+}
+
+func TestPublishFilterKeepsMatchingApps(t *testing.T) {
+	data := t.TempDir()
+	signer, err := ParseSigner("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps := apkListing("com.example.maps", "aa")
+	maps.App.Tags = nostr.Tags{{"d", maps.AppID}}
+	maps.Release.Tags = nostr.Tags{{"i", maps.AppID}}
+	maps.Assets[0].Tags = append(maps.Assets[0].Tags, nostr.Tag{"i", maps.AppID})
+	other := apkListing("com.example.other", "bb")
+	other.App.Tags = nostr.Tags{{"d", other.AppID}}
+	other.Release.Tags = nostr.Tags{{"i", other.AppID}}
+	other.Assets[0].Tags = append(other.Assets[0].Tags, nostr.Tag{"i", other.AppID})
+	writeAbout(t, data, maps.AppID)
+	writeAbout(t, data, other.AppID)
+	n, err := Publish(t.Context(), data, State{Listings: []Listing{maps, other}}, signer, 10, "maps", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("epoch = %d", n)
+	}
+	body, err := os.ReadFile(BundlePath(data, 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := tarFiles(t, body)
+	if _, ok := files["com.example.maps/about"]; !ok {
+		t.Fatalf("missing maps about in %v", keys(files))
+	}
+	if _, ok := files["com.example.other/about"]; ok {
+		t.Fatal("shipped other about")
+	}
+	raw := string(files["diff.jsonl"])
+	if !strings.Contains(raw, "com.example.maps") || strings.Contains(raw, "com.example.other") {
+		t.Fatalf("diff %s", raw)
 	}
 }
 
