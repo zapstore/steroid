@@ -7,6 +7,7 @@ require (
 	github.com/chai2010/webp v1.4.0
 	github.com/joho/godotenv v1.5.1
 	github.com/klauspost/compress v1.20.0
+	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/nbd-wtf/go-nostr v0.52.3
 	github.com/yalue/onnxruntime_go v1.25.0
 	github.com/zapstore/relay v0.0.0
