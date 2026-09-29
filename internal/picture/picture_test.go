@@ -24,6 +24,35 @@ func TestEncodeSquareWebP(t *testing.T) {
 	}
 }
 
+func TestEncodeScalesWideImage(t *testing.T) {
+	encoded, err := Encode(testPNG(t, 4100, 8), Avatar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := webp.DecodeRGBA(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds().Dx() != 128 || img.Bounds().Dy() != 128 {
+		t.Fatalf("size = %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+}
+
+func TestEncodeAcceptsWebP(t *testing.T) {
+	encoded, err := Encode(testPNG(t, 32, 32), Icon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Encode(encoded, Icon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := webp.DecodeRGBA(again)
+	if err != nil || img.Bounds().Dx() != 128 {
+		t.Fatalf("webp %v %v", img, err)
+	}
+}
+
 func TestFetchRejectsNonHTTPS(t *testing.T) {
 	if _, err := Fetch(t.Context(), "http://cdn.example/icon.png"); err == nil {
 		t.Fatal("accepted http")
