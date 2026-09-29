@@ -1,7 +1,7 @@
 package source
 
 import (
-	"encoding/json"
+	"context"
 	"io/fs"
 	"os"
 	"path"
@@ -16,22 +16,20 @@ import (
 )
 
 const (
-	maxDigestPaths   = 12
 	maxDigestSignals = 48
 	maxPerFact       = 6
 	maxLineRunes     = 320
-	maxOutboundFiles = 8
-	maxOutboundLines = 54
+	maxOutboundFiles = 16
+	maxOutboundLines = 120
 	outboundBefore   = 12
-	outboundAfter    = 36
+	outboundAfter    = 48
 	signalBefore     = 6
 	signalAfter      = 12
 	useBefore        = 18
 	useAfter         = 54
 	denialReach      = 120
-	maxUseLines      = 108
-	maxUseRunes      = 480
-	maxHostFiles     = 2
+	maxUseLines      = 160
+	maxUseRunes      = 640
 )
 
 // Digest is one bounded reading of an extracted tree.
@@ -149,6 +147,20 @@ type manifestInfo struct {
 // skipManifest omits the manifest permission list when the APK scan already produced it.
 // uses are the yes facts that need a call-site quote.
 func Read(t *Tree, skipManifest bool, uses []Use) Digest {
+	return read(context.Background(), t, skipManifest, uses, nil, "")
+}
+
+// ReadWith is Read, and ranks outbound call sites with embed when it is set.
+// A nil embedder keeps the keyword order. An embedder error does too.
+// project is APK inventory. Empty omits the Project section.
+func ReadWith(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Embedder, project string) Digest {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return read(ctx, t, skipManifest, uses, embed, project)
+}
+
+func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Embedder, project string) Digest {
 	if t == nil || t.Dir == "" {
 		return Digest{}
 	}
@@ -158,15 +170,13 @@ func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 		counts     = map[string]int{}
 		readmePath string
 		readme     string
-		project    []string
 		manifest   manifestInfo
 		outbound   []hit
 		useQuotes  = map[string]quote{}
 		account    *quote
 		encrypt    *quote
 		offline    *quote
-		host       []quote
-		serverDir  string
+		chunks     []indexedChunk
 	)
 	addHit := func(topic, fact, rel string, line int, text string, around []hit) {
 		if counts[fact] >= maxPerFact || len(hits) >= maxDigestSignals {
@@ -200,29 +210,6 @@ func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 			if manifest.path == "" || len(rel) < len(manifest.path) {
 				manifest = parseManifest(rel, string(raw))
 			}
-		case "package.json":
-			if line := packageJSON(string(raw)); line != "" {
-				project = append(project, rel+": "+line)
-			}
-		case "pubspec.yaml":
-			if line := yamlName(string(raw)); line != "" {
-				project = append(project, rel+": "+line)
-			}
-		case "go.mod":
-			if line, _, _ := strings.Cut(string(raw), "\n"); strings.HasPrefix(line, "module ") {
-				project = append(project, rel+": "+strings.TrimSpace(line))
-			}
-		}
-		if strings.HasSuffix(base, ".gradle") || strings.HasSuffix(base, ".gradle.kts") {
-			if line := gradleID(string(raw)); line != "" {
-				project = append(project, rel+": "+line)
-			}
-		}
-		if isHostFile(base) && len(host) < maxHostFiles {
-			host = append(host, quote{path: rel, lines: headLines(string(raw), maxUseLines)})
-		}
-		if serverDir == "" {
-			serverDir = serverNote(rel)
 		}
 		if base == "androidmanifest.xml" || isTestPath(rel) {
 			return nil
@@ -230,6 +217,9 @@ func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 		lines := strings.Split(string(raw), "\n")
 		scanFile(rel, lines, addHit)
 		if codeExt(rel) {
+			if embed != nil {
+				chunks = appendChunks(chunks, rel, lines)
+			}
 			outbound = append(outbound, collectOutbound(rel, raw)...)
 			if account == nil {
 				if q, ok := findQuote(rel, lines, accountLine); ok {
@@ -250,7 +240,8 @@ func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 		captureUses(rel, lines, uses, useQuotes)
 		return nil
 	})
-	outbound = selectOutbound(outbound)
+	outbound = selectOutbound(ctx, outbound, embed)
+	outbound, account, encrypt, offline = applySourceIndex(ctx, embed, chunks, uses, useQuotes, outbound, account, encrypt, offline)
 	sort.Slice(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
 		if a.topic != b.topic {
@@ -264,7 +255,7 @@ func Read(t *Tree, skipManifest bool, uses []Use) Digest {
 		}
 		return a.line < b.line
 	})
-	return Digest{Text: formatDigest(len(paths), paths, readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt, offline, host, serverDir)}
+	return Digest{Text: formatDigest(len(paths), readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt, offline)}
 }
 
 func scanFile(rel string, lines []string, addHit func(topic, fact, rel string, line int, text string, around []hit)) {
@@ -361,7 +352,7 @@ func collectOutbound(rel string, raw []byte) []hit {
 		}
 		for i := sp.a; i <= sp.b; i++ {
 			text := strings.TrimSpace(lines[i])
-			if text == "" {
+			if !codeLine(text) {
 				continue
 			}
 			out = append(out, hit{path: rel, line: i + 1, text: clipRunes(text, maxLineRunes)})
@@ -394,16 +385,17 @@ func outboundTrigger(line string) bool {
 	return strings.Contains(low, "base_url") || strings.Contains(low, "baseurl") || strings.Contains(low, "api_url") || strings.Contains(low, "apiurl") || strings.Contains(low, "endpoint")
 }
 
-func selectOutbound(lines []hit) []hit {
-	type group struct {
-		path  string
-		lines []hit
-		score int
-	}
-	var groups []group
+type outboundGroup struct {
+	path  string
+	lines []hit
+	score int
+}
+
+func selectOutbound(ctx context.Context, lines []hit, embed Embedder) []hit {
+	var groups []outboundGroup
 	for _, line := range lines {
 		if len(groups) == 0 || groups[len(groups)-1].path != line.path {
-			groups = append(groups, group{path: line.path})
+			groups = append(groups, outboundGroup{path: line.path})
 		}
 		g := &groups[len(groups)-1]
 		g.lines = append(g.lines, line)
@@ -411,9 +403,13 @@ func selectOutbound(lines []hit) []hit {
 	for i := range groups {
 		groups[i].score = outboundScore(groups[i].lines)
 	}
-	sort.SliceStable(groups, func(i, j int) bool {
-		return groups[i].score > groups[j].score
-	})
+	if ranked, ok := rankOutbound(ctx, groups, embed); ok {
+		groups = ranked
+	} else {
+		sort.SliceStable(groups, func(i, j int) bool {
+			return groups[i].score > groups[j].score
+		})
+	}
 	if len(groups) > maxOutboundFiles {
 		groups = groups[:maxOutboundFiles]
 	}
@@ -500,73 +496,14 @@ func parseManifest(rel, body string) manifestInfo {
 	return info
 }
 
-func packageJSON(body string) string {
-	var doc struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal([]byte(body), &doc); err != nil {
-		return ""
-	}
-	name := strings.TrimSpace(doc.Name)
-	desc := strings.Join(strings.Fields(doc.Description), " ")
-	switch {
-	case name != "" && desc != "":
-		return name + " — " + clipRunes(desc, 240)
-	case desc != "":
-		return clipRunes(desc, 240)
-	default:
-		return name
-	}
-}
-
-func yamlName(body string) string {
-	var name, desc string
-	for _, line := range strings.Split(body, "\n") {
-		k, v, ok := strings.Cut(line, ":")
-		if !ok || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		v = strings.Trim(strings.TrimSpace(v), `"'`)
-		switch strings.TrimSpace(k) {
-		case "name":
-			if name == "" {
-				name = v
-			}
-		case "description":
-			if desc == "" {
-				desc = strings.Join(strings.Fields(v), " ")
-			}
-		}
-	}
-	switch {
-	case name != "" && desc != "":
-		return name + " — " + clipRunes(desc, 240)
-	case desc != "":
-		return clipRunes(desc, 240)
-	default:
-		return name
-	}
-}
-
-func gradleID(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		low := strings.ToLower(line)
-		if strings.Contains(low, "applicationid") || strings.Contains(low, "namespace") {
-			return clipRunes(strings.TrimSpace(line), maxLineRunes)
-		}
-	}
-	return ""
-}
-
-func formatDigest(files int, paths []string, readmePath, readme string, project []string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt, offline *quote, host []quote, serverDir string) string {
+func formatDigest(files int, readmePath, readme, project string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt, offline *quote) string {
 	var b strings.Builder
 	if files > 0 {
 		b.WriteString("Files: ")
 		b.WriteString(strconv.Itoa(files))
 		b.WriteByte('\n')
 	}
-	listed := pickPaths(paths)
+	listed := pickPaths(readmePath, manifest.path)
 	if len(listed) > 0 {
 		b.WriteString("\nPaths:\n")
 		for _, p := range listed {
@@ -581,13 +518,10 @@ func formatDigest(files int, paths []string, readmePath, readme string, project 
 		b.WriteString(strings.TrimSpace(readme))
 		b.WriteByte('\n')
 	}
-	if len(project) > 0 {
-		sort.Strings(project)
+	if dump := strings.TrimSpace(project); dump != "" {
 		b.WriteString("\nProject:\n")
-		for _, line := range project {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
+		b.WriteString(dump)
+		b.WriteByte('\n')
 	}
 	if len(outbound) > 0 {
 		b.WriteString("\nOutbound:\n")
@@ -649,16 +583,6 @@ func formatDigest(files int, paths []string, readmePath, readme string, project 
 	writeNamed(&b, "Account", account)
 	writeNamed(&b, "Encryption", encrypt)
 	writeNamed(&b, "Offline", offline)
-	if len(host) > 0 || serverDir != "" {
-		b.WriteString("\nHosting:\n")
-		for _, q := range host {
-			writeQuote(&b, q)
-		}
-		if serverDir != "" {
-			b.WriteString(serverDir)
-			b.WriteByte('\n')
-		}
-	}
 	if len(hits) > 0 {
 		b.WriteString("\nSignals:\n")
 		for _, h := range hits {
@@ -709,16 +633,19 @@ func writeQuote(b *strings.Builder, q quote) {
 	}
 }
 
-func pickPaths(paths []string) []string {
+func pickPaths(readmePath, manifestPath string) []string {
 	var kept []string
-	for _, p := range paths {
-		if rankPath(p) == 0 {
-			kept = append(kept, p)
+	seen := map[string]struct{}{}
+	for _, p := range []string{readmePath, manifestPath} {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
 		}
-	}
-	sort.Strings(kept)
-	if len(kept) > maxDigestPaths {
-		kept = kept[:maxDigestPaths]
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		kept = append(kept, p)
 	}
 	return kept
 }
@@ -744,24 +671,6 @@ func domainsIn(lines []hit, path string) string {
 	}
 	sort.Strings(hosts)
 	return strings.Join(hosts, ", ")
-}
-
-func rankPath(rel string) int {
-	base := strings.ToLower(path.Base(rel))
-	switch base {
-	case "readme.md", "androidmanifest.xml", "pubspec.yaml", "package.json", "go.mod", "cargo.toml":
-		return 0
-	}
-	if strings.HasSuffix(base, ".gradle") || strings.HasSuffix(base, ".kts") {
-		return 0
-	}
-	low := strings.ToLower(rel)
-	for _, s := range []string{"screen", "activity", "page", "route"} {
-		if strings.Contains(low, s) {
-			return 1
-		}
-	}
-	return 2
 }
 
 func codeExt(rel string) bool {
@@ -1033,38 +942,22 @@ func e2eeLine(low string) bool {
 	return containsAny(low, "e2ee", "end-to-end", "end to end", "secretbox", "libsodium", "nacl.box", "sessioncipher", "signalprotocol")
 }
 
-func isHostFile(base string) bool {
-	switch base {
-	case "dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml":
-		return true
-	default:
+func codeLine(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return false
 	}
-}
-
-func serverNote(rel string) string {
-	for _, part := range strings.Split(rel, "/") {
-		switch part {
-		case "server", "deploy":
-			return part + "/"
-		}
-	}
-	return ""
-}
-
-func headLines(raw string, n int) []hit {
-	var out []hit
-	for i, line := range strings.Split(raw, "\n") {
-		text := strings.TrimSpace(line)
-		if text == "" {
+	for _, r := range text {
+		switch r {
+		case '{', '}', '(', ')', '[', ']', ',', ';', ':':
 			continue
-		}
-		out = append(out, hit{line: i + 1, text: clipRunes(text, maxLineRunes)})
-		if len(out) == n {
-			break
+		default:
+			if r > ' ' {
+				return true
+			}
 		}
 	}
-	return out
+	return false
 }
 
 func lineWindow(lines []string, i, before, after int) []hit {
@@ -1091,7 +984,7 @@ func clipWindow(lines []string, a, b, runes int) []hit {
 	var out []hit
 	for j := a; j <= b; j++ {
 		text := strings.TrimSpace(lines[j])
-		if text == "" {
+		if !codeLine(text) {
 			continue
 		}
 		out = append(out, hit{line: j + 1, text: clipRunes(text, runes)})

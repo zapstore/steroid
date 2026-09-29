@@ -1,6 +1,7 @@
 package source
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,13 +38,13 @@ func TestReadDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := Read(&Tree{Dir: dir}, false, nil).Text
+	got := ReadWith(t.Context(), &Tree{Dir: dir}, false, nil, nil, "package: com.example.calc\nnative: libapp.so").Text
 	for _, want := range []string{
 		"README.md",
 		"android/app/src/main/AndroidManifest.xml",
 		"permissions: android.permission.RECEIVE_SMS",
 		"components: activity .MainActivity",
-		"pubspec.yaml: calc — A calculator",
+		"Project:\npackage: com.example.calc\nnative: libapp.so",
 		"domains: collect.example.test",
 		"lib/exfil.dart\n",
 		"1: void leak() { HttpURLConnection; }",
@@ -54,6 +55,9 @@ func TestReadDigest(t *testing.T) {
 			t.Errorf("missing %q\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "pubspec.yaml") || strings.Contains(got, "A calculator") {
+		t.Fatalf("source project files leaked:\n%s", got)
+	}
 	if strings.Contains(got, "schemas.android.com") || strings.Contains(got, "cleartext") {
 		t.Fatalf("namespace host or cleartext leaked into the digest:\n%s", got)
 	}
@@ -63,6 +67,88 @@ func TestReadDigest(t *testing.T) {
 	got = Read(&Tree{Dir: dir}, false, nil).Text
 	if strings.Contains(got, "x.com") || strings.Contains(got, "dav.example.com") {
 		t.Fatalf("non-call url leaked:\n%s", got)
+	}
+}
+
+func TestChromemFindsSourceFactsWithoutPhrases(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notes := "fun show() {\n  notes.value = noteDao.all()\n}\n"
+	decoy := "// works offline\nfun banner() {\n  return true\n}\n"
+	gate := "fun enter() {\n  gate.required()\n}\n"
+	login := "fun login() {\n  return\n}\n"
+	for name, body := range map[string]string{
+		"notes.kt": notes, "banner.kt": decoy, "enter.kt": gate, "login.kt": login,
+	} {
+		if err := os.WriteFile(filepath.Join(lib, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	embed := func(_ context.Context, text string) ([]float32, error) {
+		switch {
+		case strings.Contains(text, "noteDao"), strings.Contains(text, "loads what the person sees"):
+			return []float32{1, 0, 0}, nil
+		case strings.Contains(text, "gate.required"), strings.Contains(text, "sign-in that blocks"):
+			return []float32{0, 1, 0}, nil
+		default:
+			return []float32{0, 0, 1}, nil
+		}
+	}
+	got := ReadWith(t.Context(), &Tree{Dir: dir}, true, nil, embed, "").Text
+	offline := digestSection(got, "Offline:")
+	account := digestSection(got, "Account:")
+	if !strings.Contains(offline, "noteDao") || strings.Contains(offline, "banner.kt") {
+		t.Fatalf("offline section:\n%s", offline)
+	}
+	if !strings.Contains(account, "gate.required") || strings.Contains(account, "login.kt") {
+		t.Fatalf("account section:\n%s", account)
+	}
+}
+
+func digestSection(text, title string) string {
+	i := strings.Index(text, title)
+	if i < 0 {
+		return ""
+	}
+	rest := text[i+len(title):]
+	if j := strings.Index(rest, "\n\n"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+func TestOutboundChromemPrefersExfilOverKeyword(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Keyword score ranks this first: a post that names an email.
+	news := "fun subscribe() {\n  client.post(email.toRequestBody())\n}\n"
+	// Keyword score ranks this second. The embedder treats the device id as the leak.
+	leak := "fun ping() {\n  client.post(androidId.toRequestBody())\n}\n"
+	if err := os.WriteFile(filepath.Join(lib, "news.kt"), []byte(news), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lib, "leak.kt"), []byte(leak), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	embed := func(_ context.Context, text string) ([]float32, error) {
+		switch {
+		case strings.Contains(text, "androidId"), strings.Contains(text, "personal data sent"):
+			return []float32{1, 0}, nil
+		default:
+			return []float32{0, 1}, nil
+		}
+	}
+	got := ReadWith(t.Context(), &Tree{Dir: dir}, true, nil, embed, "").Text
+	leakAt := strings.Index(got, "androidId")
+	newsAt := strings.Index(got, "email")
+	if leakAt < 0 || newsAt < 0 || leakAt > newsAt {
+		t.Fatalf("exfil site should lead\n%s", got)
 	}
 }
 
@@ -91,14 +177,10 @@ func TestOutboundRanksUploadOverGet(t *testing.T) {
 	}
 }
 
-func TestReadQuotesYesFactSignalNeighborAndHosting(t *testing.T) {
+func TestReadQuotesYesFactSignalAndNeighbor(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
-	server := filepath.Join(dir, "server")
 	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(server, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scan := "fun open() {\n  val camera = ImageCapture.Builder()\n  camera.takePicture()\n}\n"
@@ -117,12 +199,6 @@ func TestReadQuotesYesFactSignalNeighborAndHosting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "net.kt"), []byte(net), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("services:\n  api:\n    image: app\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(server, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	note := "fun open() {\n  // works offline\n}\n"
 	if err := os.WriteFile(filepath.Join(src, "store.kt"), []byte(note), 0o644); err != nil {
 		t.Fatal(err)
@@ -139,9 +215,6 @@ func TestReadQuotesYesFactSignalNeighborAndHosting(t *testing.T) {
 		"Offline:\nsrc/store.kt\n",
 		"works offline",
 		"crypto_secretbox_easy(message)",
-		"Hosting:\ndocker-compose.yml\n",
-		"services:",
-		"server/",
 		"- privacy network src/net.kt:2: val conn = HttpURLConnection()",
 		"- privacy network src/net.kt:1: fun leak() {",
 		"- privacy network src/net.kt:3: conn.connect()",
@@ -149,6 +222,25 @@ func TestReadQuotesYesFactSignalNeighborAndHosting(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q\n%s", want, got)
 		}
+	}
+}
+
+func TestOmitsBraceOnlyLines(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "fun tile() {\n  openConnectionProvider.removeOpenConnection(id)\n  },\n  ),\n  );\n}\n"
+	if err := os.WriteFile(filepath.Join(lib, "tile.dart"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := Read(&Tree{Dir: dir}, true, nil).Text
+	if !strings.Contains(got, "removeOpenConnection") {
+		t.Fatalf("%s", got)
+	}
+	if strings.Contains(got, "},") || strings.Contains(got, "),") || strings.Contains(got, ");") {
+		t.Fatalf("brace-only lines leaked:\n%s", got)
 	}
 }
 
