@@ -16,6 +16,8 @@ import (
 func enrich(args []string) int {
 	fs := flag.NewFlagSet("enrich", flag.ExitOnError)
 	filter := fs.String("filter", "", "substring of the app ID")
+	debug := fs.Bool("debug", false, "write prompt and response under data/debug/<app-id>")
+	force := fs.Bool("force", false, "delete each matching app directory before enriching")
 	fs.Usage = func() {
 		usage()
 		fs.PrintDefaults()
@@ -42,7 +44,7 @@ func enrich(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := catalog.EnrichMatching(ctx, env.data, env.dbPath, env.model, *filter); err != nil {
+	if err := catalog.EnrichMatching(ctx, env.data, env.dbPath, env.model, *filter, *debug, *force); err != nil {
 		env.log.Error("enrich", "error", err, "relay_db", env.dbPath, "data", env.data)
 		return 1
 	}

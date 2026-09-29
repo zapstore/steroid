@@ -63,7 +63,7 @@ func TestRunOneTurnKeepsCitedWarning(t *testing.T) {
 		reply := `{
 			"about":"Calc is an offline calculator.",
 			"security":"The source reaches the network and can receive SMS.",
-			"facts":"\"fact\",\"value\",\"reason\",\"permissions\"\n\"offline_capable\",\"yes\",\"\",\"\"\n\"sms\",\"yes\",\"the inbox screen reads messages\",\"RECEIVE_SMS\"\n"
+			"facts":"\"fact\",\"value\",\"notes\"\n\"offline_capable\",\"yes\",\"\"\n\"sms\",\"yes\",\"the inbox screen reads messages\"\n"
 		}`
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + jsonString(reply) + `}}]}`))
 	}))
@@ -73,7 +73,7 @@ func TestRunOneTurnKeepsCitedWarning(t *testing.T) {
 		ProviderURL: srv.URL,
 		APIKey:      "k",
 		Model:       "m",
-	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "", "", "")
+	}, srv.Client(), &source.Tree{Dir: dir, Files: 3}, sampleApp(), nil, "", "", "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/zapstore/steroid/internal/config"
 	"github.com/zapstore/steroid/internal/detect"
 	"github.com/zapstore/steroid/internal/generate"
+	"github.com/zapstore/steroid/internal/potion"
 	"github.com/zapstore/steroid/internal/review"
 	"github.com/zapstore/steroid/internal/scan"
 	"github.com/zapstore/steroid/internal/source"
@@ -57,31 +58,28 @@ func site(in Input) string {
 
 // Overview calls the LLM. summary is the about text.
 // note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version, hash string, rows []scan.Row, prevAbout, prevSecurity, prevFacts string) (string, string, []byte, string, error) {
+func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version, modelDir string, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", nil, "", err
 	}
-	matched := false
+	embed := sourceEmbed(modelDir)
 	if tree != nil && pkg != "" {
-		ok, _ := source.Compare(tree, pkg, version)
-		if !ok {
+		if ok, _ := source.Compare(tree, pkg, version); !ok {
 			tree = nil
-		} else {
-			matched = true
 		}
 	}
 	var reviewErr error
 	if tree != nil {
-		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts)
+		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, embed, project)
 		if err == nil {
-			about, security, facts, err := finish(gen, rows, app.License, matched, hash, pkg, version)
+			about, security, facts, err := finish(gen, rows)
 			return about, security, facts, llmNote("review", gen.ProviderModel), err
 		}
 		reviewErr = err
 	}
 	src := ""
 	if tree != nil {
-		src = source.Read(tree, scan.HasAPK(rows), source.Uses(rows)).Text
+		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), embed, project).Text
 	}
 	gen, err := generate.Run(ctx, cfg, client, generate.Input{
 		App:       app,
@@ -101,8 +99,20 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	if reviewErr != nil {
 		note += " (review failed: " + strings.Join(strings.Fields(reviewErr.Error()), " ") + ")"
 	}
-	about, security, facts, err := finish(gen, rows, app.License, matched, hash, pkg, version)
+	about, security, facts, err := finish(gen, rows)
 	return about, security, facts, note, err
+}
+
+// sourceEmbed is the static code model chromem ranks windows with.
+// The leaf model is only used for the stored app vector.
+func sourceEmbed(modelDir string) source.Embedder {
+	if strings.TrimSpace(modelDir) == "" {
+		return nil
+	}
+	dir := potion.Dir(modelDir)
+	return func(ctx context.Context, text string) ([]float32, error) {
+		return potion.Embed(ctx, dir, text)
+	}
 }
 
 func llmNote(path, model string) string {
@@ -113,13 +123,26 @@ func llmNote(path, model string) string {
 	return path + " " + model
 }
 
-func finish(gen generate.Result, rows []scan.Row, license string, matched bool, hash, pkg, version string) (string, string, []byte, error) {
-	locked := generate.Lock(gen.Facts, rows)
-	facts := generate.AllowOpenSource(locked, license, matched)
-	rows = claims(rows, facts, matched, hash, pkg, version)
+func finish(gen generate.Result, rows []scan.Row) (string, string, []byte, error) {
+	rows = claims(rows, generate.Lock(gen.Facts, rows))
 	rows = justify(rows, gen.Reason)
 	security := strings.TrimSpace(gen.Security)
 	return gen.About, security, scan.CSV(rows), nil
+}
+
+func cleanReason(text string) string {
+	low := strings.ToLower(strings.TrimSpace(text))
+	for _, prefix := range []string{"no-change, ", "no change, ", "no-change ", "no change "} {
+		if strings.HasPrefix(low, prefix) {
+			text = strings.TrimSpace(text[len(prefix):])
+			low = strings.ToLower(text)
+			break
+		}
+	}
+	if low == "internet permission absent" || low == "no network permission" {
+		return ""
+	}
+	return text
 }
 
 func justify(rows []scan.Row, reason map[string]string) []scan.Row {
@@ -127,7 +150,7 @@ func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 		if row.Value != "yes" {
 			continue
 		}
-		text := strings.Join(strings.Fields(reason[row.Fact]), " ")
+		text := cleanReason(strings.Join(strings.Fields(reason[row.Fact]), " "))
 		if text == "" || strings.Contains(text, "\n") || len(text) > 160 {
 			continue
 		}
@@ -136,7 +159,7 @@ func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 	return rows
 }
 
-func claims(rows []scan.Row, facts generate.Facts, matched bool, hash, pkg, version string) []scan.Row {
+func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 	have := map[string]bool{}
 	for _, row := range rows {
 		have[row.Fact] = true
@@ -149,28 +172,22 @@ func claims(rows []scan.Row, facts generate.Facts, matched bool, hash, pkg, vers
 	}
 	add("account_required", facts.AccountRequired)
 	add("e2ee", facts.E2EE)
-	add("self_hostable", facts.SelfHostable)
 	add("offline_capable", facts.OfflineCapable)
-	if matched && facts.OpenSource == "yes" {
-		rows = append(rows, scan.Row{
-			Fact: "open_source", Value: "yes", Basis: "apk", Source: strings.ToLower(strings.TrimSpace(hash)),
-			Evidence: strings.TrimSpace(pkg + " " + version),
-		})
-	}
+	add("open_source", facts.OpenSource)
 	return rows
 }
 
-// Scan reads scanner facts from a verified APK.
-func Scan(file *apk.File) ([]scan.Row, error) {
+// Scan reads scanner facts and an APK inventory dump from a verified APK.
+func Scan(file *apk.File) ([]scan.Row, string, error) {
 	return analyze(file)
 }
 
-func analyze(file *apk.File) ([]scan.Row, error) {
+func analyze(file *apk.File) ([]scan.Row, string, error) {
 	report, err := detect.Analyze(file.Path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return scan.FromReport(report, file.Hash), nil
+	return scan.FromReport(report, file.Hash), report.Project(), nil
 }
 
 // ModelConfig reads the embedder configuration and rejects a call with no provider.

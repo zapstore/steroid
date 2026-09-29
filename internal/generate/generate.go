@@ -4,7 +4,6 @@ package generate
 import (
 	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/zapstore/steroid/internal/config"
+	"github.com/zapstore/steroid/internal/debug"
 	"github.com/zapstore/steroid/internal/scan"
 )
 
@@ -140,6 +140,7 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 }
 
 // Record is the user message: current notes, this scan, the listing, then source.
+// The parts are separated by a line that is only "---".
 func Record(app App, sheet []scan.Row, source, about, security, prevFacts string) string {
 	var b strings.Builder
 	b.WriteString("Current:\n")
@@ -156,22 +157,30 @@ func Record(app App, sheet []scan.Row, source, about, security, prevFacts string
 		raw = []byte(`{"about":"","security":"","facts":""}`)
 	}
 	b.Write(raw)
-	b.WriteString("\n\nScan:\n")
+	writePart(&b, "Scan:\n")
 	if csvText := scan.CSV(sheet); len(csvText) > 0 {
 		b.Write(csvText)
 	} else {
-		b.WriteString("\"fact\",\"value\",\"reason\",\"permissions\"\n")
+		b.WriteString("\"fact\",\"value\",\"notes\"\n")
 	}
-	b.WriteString("\nListing:\n")
+	writePart(&b, "Listing:\n")
 	writeListing(&b, app)
 	if src := strings.TrimSpace(source); src != "" {
-		b.WriteString("\nSource:\n")
+		writePart(&b, "Source:\n")
 		b.WriteString(src)
 		if !strings.HasSuffix(src, "\n") {
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
+}
+
+func writePart(b *strings.Builder, label string) {
+	if !strings.HasSuffix(b.String(), "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("---\n")
+	b.WriteString(label)
 }
 
 func writeListing(b *strings.Builder, app App) {
@@ -205,9 +214,6 @@ func writeListing(b *strings.Builder, app App) {
 // Reply reads the model object. A no-change facts sheet keeps the previous CSV.
 func Reply(about, security, factsCSV, prevFacts string, sheet []scan.Row) (Notes, error) {
 	about = strings.TrimSpace(about)
-	if about == "" {
-		return Notes{}, fmt.Errorf("empty summary")
-	}
 	facts, reasons, noChange, err := ParseSheet(factsCSV)
 	if err != nil {
 		return Notes{}, err
@@ -236,39 +242,24 @@ func ParseSheet(raw string) (Facts, map[string]string, bool, error) {
 	if strings.EqualFold(raw, "no-change") {
 		return Facts{}, nil, true, nil
 	}
-	r := csv.NewReader(strings.NewReader(raw))
-	r.FieldsPerRecord = -1
-	rows, err := r.ReadAll()
+	rows, err := scan.Records(raw)
 	if err != nil {
 		return Facts{}, nil, false, fmt.Errorf("facts csv: %w", err)
 	}
-	if len(rows) == 0 {
-		return Facts{}, nil, false, nil
-	}
-	col := map[string]int{}
-	for i, name := range rows[0] {
-		col[strings.TrimSpace(name)] = i
-	}
-	factI, okFact := col["fact"]
-	valueI, okValue := col["value"]
-	if !okFact || !okValue {
-		return Facts{}, nil, false, fmt.Errorf("facts csv: missing columns")
-	}
-	reasonI, okReason := col["reason"]
 	var facts Facts
 	reasons := map[string]string{}
-	for _, row := range rows[1:] {
-		if factI >= len(row) || valueI >= len(row) {
+	for _, row := range rows {
+		if len(row) < 2 {
 			continue
 		}
-		fact := strings.TrimSpace(row[factI])
-		value := truth(row[valueI])
+		fact := strings.TrimSpace(row[0])
+		value := truth(row[1])
 		if fact == "" || (value != "yes" && value != "no") {
 			continue
 		}
 		setFact(&facts, fact, value)
-		if okReason && reasonI < len(row) {
-			if text := strings.TrimSpace(row[reasonI]); text != "" {
+		if len(row) > 2 {
+			if text := strings.TrimSpace(row[2]); text != "" {
 				reasons[fact] = text
 			}
 		}
@@ -292,8 +283,6 @@ func setFact(f *Facts, fact, value string) {
 		f.E2EE = value
 	case "open_source":
 		f.OpenSource = value
-	case "self_hostable":
-		f.SelfHostable = value
 	}
 }
 
@@ -346,12 +335,17 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 	for i, m := range msgs {
 		wire[i] = map[string]string{"role": m.Role, "content": m.Content}
 	}
+	dbg := debug.From(ctx)
+	dbg.Write("prompt", promptDump(model, msgs))
 	payload := map[string]any{
 		"model":           model,
 		"messages":        wire,
 		"response_format": map[string]string{"type": "json_object"},
-		// effort "none" tells PPQ not to bill or wait on reasoning tokens.
-		"reasoning": map[string]string{"effort": "none"},
+		// Low effort still thinks. exclude leaves that trace out of the response. This client never reads it.
+		"reasoning": map[string]any{
+			"effort":  "low",
+			"exclude": true,
+		},
 	}
 	ctx, cancel := context.WithTimeout(ctx, completeTimeout)
 	defer cancel()
@@ -367,13 +361,16 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	res, err := client.Do(req)
 	if err != nil {
+		dbg.Write("response.json", err.Error()+"\n")
 		return "", err
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
+		dbg.Write("response.json", err.Error()+"\n")
 		return "", err
 	}
+	dbg.Write("response.json", string(raw))
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%s: HTTP %d: %s", model, res.StatusCode, clip(string(raw)))
 	}
@@ -397,6 +394,15 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 		}
 	}
 	return content, nil
+}
+
+func promptDump(model string, msgs []Message) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "model: %s\nresponse_format: json_object\nreasoning: low, excluded\n", model)
+	for _, m := range msgs {
+		fmt.Fprintf(&b, "\n## %s\n%s\n", m.Role, m.Content)
+	}
+	return b.String()
 }
 
 func jsonContent(s string) string {

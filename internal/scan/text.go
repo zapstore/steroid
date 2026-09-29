@@ -2,6 +2,7 @@ package scan
 
 import (
 	"bytes"
+	"encoding/csv"
 	"strings"
 )
 
@@ -80,9 +81,8 @@ func Describe(row Row) string {
 	}
 }
 
-// ReasonText is the model's phrase plus scanner findings that are not permissions.
-// Permission ids belong in Permissions.
-func ReasonText(row Row) string {
+// reasonText is the model phrase plus scanner findings that are not permission ids.
+func reasonText(row Row) string {
 	perms, other := splitEvidence(row.Evidence)
 	phrase := strings.TrimSpace(row.Reason)
 	if restatesPermission(phrase, perms) {
@@ -106,8 +106,8 @@ func ReasonText(row Row) string {
 	}
 }
 
-// Permissions is the comma-separated permission ids for a fact.
-func Permissions(row Row) string {
+// permissionIDs lists the Android permission ids on the row.
+func permissionIDs(row Row) string {
 	perms, _ := splitEvidence(row.Evidence)
 	return strings.Join(perms, ",")
 }
@@ -161,19 +161,30 @@ func withEvidence(label, evidence string) string {
 	return label + ": " + evidence
 }
 
-// CSV encodes fact rows as fact,value,reason,permissions.
-// Every field is quoted, so the permissions column can hold comma-separated ids.
-// An empty sheet returns nil.
+// CSV encodes fact rows as fact, value, notes.
+// There is no header. Every field is quoted. An empty sheet returns nil.
 func CSV(rows []Row) []byte {
 	if len(rows) == 0 {
 		return nil
 	}
 	var buf bytes.Buffer
-	writeRecord(&buf, "fact", "value", "reason", "permissions")
 	for _, row := range onePerFact(rows) {
-		writeRecord(&buf, row.Fact, row.Value, ReasonText(row), Permissions(row))
+		writeRecord(&buf, row.Fact, row.Value, notesText(row))
 	}
 	return buf.Bytes()
+}
+
+// notesText is the third column. Permission ids lead the sentence when the row has them.
+func notesText(row Row) string {
+	phrase := reasonText(row)
+	perms := permissionIDs(row)
+	if perms == "" || strings.Contains(phrase, perms) {
+		return phrase
+	}
+	if phrase == "" {
+		return perms
+	}
+	return perms + ". " + phrase
 }
 
 func writeRecord(buf *bytes.Buffer, fields ...string) {
@@ -186,6 +197,25 @@ func writeRecord(buf *bytes.Buffer, fields ...string) {
 		buf.WriteByte('"')
 	}
 	buf.WriteByte('\n')
+}
+
+// Records parses a facts CSV. Columns are fact, value, notes, in that order.
+// A leading header row is ignored.
+func Records(raw string) ([][]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	r := csv.NewReader(strings.NewReader(raw))
+	r.FieldsPerRecord = -1
+	rows, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 && len(rows[0]) > 0 && strings.EqualFold(strings.TrimSpace(rows[0][0]), "fact") {
+		rows = rows[1:]
+	}
+	return rows, nil
 }
 
 // HasInternet reports whether the APK declared android.permission.INTERNET.

@@ -94,6 +94,15 @@ func TestPlanLostAboutFileRedoes(t *testing.T) {
 	}
 }
 
+func TestBlankNoChange(t *testing.T) {
+	if !blankNoChange("no-change", "") || !blankNoChange("No-Change", "  ") {
+		t.Fatal("blank current")
+	}
+	if blankNoChange("no-change", "Wallet for cards.") || blankNoChange("A wallet.", "") {
+		t.Fatal("has text")
+	}
+}
+
 func TestPlanSourceAbsentSkipsSecurity(t *testing.T) {
 	o := observed{APK: "apk", Feature: "feat", Repo: true, HasIcon: true}
 	got := plan(memo{}, o)

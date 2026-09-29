@@ -11,11 +11,12 @@ var reportMu sync.Mutex
 
 // appReport is one enrichment, printed as a single block so parallel apps do not interleave.
 type appReport struct {
-	id      string
-	version string
-	plan    []string
-	ok      []string
-	fails   []string
+	id       string
+	version  string
+	plan     []string
+	ok       []string
+	fails    []string
+	debugDir string
 }
 
 func (r *appReport) mark(stage string) {
@@ -97,6 +98,9 @@ func (r *appReport) String() string {
 	}
 	for _, fail := range missed {
 		fmt.Fprintf(&b, "  fail %s\n", fail)
+	}
+	if r.debugDir != "" {
+		fmt.Fprintf(&b, "  debug %s\n", r.debugDir)
 	}
 	return b.String()
 }

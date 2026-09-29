@@ -30,21 +30,21 @@ func serve(_ []string) int {
 		Now:    time.Now,
 		Log:    env.log,
 	}
-	if raw := strings.TrimSpace(os.Getenv("SEAL_INTERVAL")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("BUNDLE_INTERVAL")); raw != "" {
 		every, err := time.ParseDuration(raw)
 		if err != nil || every <= 0 {
-			env.log.Error("seal", "error", fmt.Errorf("SEAL_INTERVAL must be a positive duration"))
+			env.log.Error("bundle", "error", fmt.Errorf("BUNDLE_INTERVAL must be a positive duration"))
 			return 1
 		}
 		if env.dbPath == "" {
-			env.log.Error("seal", "error", fmt.Errorf("RELAY_DB or SYSTEM_DIRECTORY_PATH is required"))
+			env.log.Error("bundle", "error", fmt.Errorf("RELAY_DB or SYSTEM_DIRECTORY_PATH is required"))
 			return 1
 		}
 		if _, err := run.ModelConfig(); err != nil {
-			env.log.Error("seal", "error", err)
+			env.log.Error("bundle", "error", err)
 			return 1
 		}
-		go sealLoop(ctx, env, every)
+		go bundleLoop(ctx, env, every)
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/deltas", h)
@@ -76,16 +76,16 @@ func serve(_ []string) int {
 	}
 }
 
-func sealLoop(ctx context.Context, env catalogEnv, every time.Duration) {
-	runSeal := func() {
-		n, err := catalog.Seal(ctx, env.data, env.dbPath, env.model, env.signer, "", false)
+func bundleLoop(ctx context.Context, env catalogEnv, every time.Duration) {
+	run := func() {
+		n, err := catalog.Bundle(ctx, env.data, env.dbPath, env.model, env.signer, "", false, false)
 		if err != nil {
-			env.log.Error("seal", "error", err, "relay_db", env.dbPath, "data", env.data)
+			env.log.Error("bundle", "error", err, "relay_db", env.dbPath, "data", env.data)
 			return
 		}
-		env.log.Info("seal", "epoch", n)
+		env.log.Info("bundle", "epoch", n)
 	}
-	runSeal()
+	run()
 	interval := time.NewTicker(every)
 	defer interval.Stop()
 	for {
@@ -93,7 +93,7 @@ func sealLoop(ctx context.Context, env catalogEnv, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-interval.C:
-			runSeal()
+			run()
 		}
 	}
 }

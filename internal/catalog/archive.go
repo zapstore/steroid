@@ -101,7 +101,7 @@ func pack(ctx context.Context, members []member, from, to, sealedAt int64, signe
 	slices.SortFunc(members, func(a, b member) int { return strings.Compare(a.Name, b.Name) })
 	all := members
 	if signer != nil {
-		// One file tag per member does not fit in a NIP-46 request once a seal
+		// One file tag per member does not fit in a NIP-46 request once a bundle
 		// covers thousands of apps. NIP-44 plaintext maxes at 64KB. The signed
 		// event tags only the index; the index lists every other member hash.
 		index := fileIndex(members)

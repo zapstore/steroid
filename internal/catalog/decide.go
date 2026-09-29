@@ -2,7 +2,7 @@ package catalog
 
 // enrichVersion is the enrichment generation stored in each app cache.
 // Bump it when cached about, security, facts, or vectors should be redone.
-const enrichVersion = 8
+const enrichVersion = 1
 
 // aboutSkipped is the cache about field when the listing text is enough and no about file is stored.
 const aboutSkipped = "skipped"

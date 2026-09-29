@@ -35,7 +35,7 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 		"ads AdMob",
 		"sms READ_SMS",
 		"query_all_packages QUERY_ALL_PACKAGES",
-		"offline_capable INTERNET permission absent",
+		"offline_capable ",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("missing %s in %v", key, got)
@@ -94,22 +94,22 @@ func TestInternetPresentOmitsOffline(t *testing.T) {
 
 func TestCSVColumns(t *testing.T) {
 	got := string(CSV([]Row{{
-		Fact: "offline_capable", Value: "yes", Basis: "apk", Source: "abc", Evidence: "INTERNET permission absent",
+		Fact: "offline_capable", Value: "yes", Basis: "apk", Source: "abc",
 	}}))
-	if !strings.HasPrefix(got, "\"fact\",\"value\",\"reason\",\"permissions\"\n") || !strings.Contains(got, "\"offline_capable\",\"yes\",\"INTERNET permission absent\",\"\"\n") {
+	if strings.Contains(got, "\"fact\",\"value\"") || !strings.HasPrefix(got, "\"offline_capable\",\"yes\",\"\"\n") {
 		t.Fatalf("%s", got)
 	}
 	located := string(CSV([]Row{{
 		Fact: "location", Value: "yes", Basis: "apk", Evidence: "ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION", Reason: "sharing location in chats",
 	}}))
-	if !strings.Contains(located, "\"sharing location in chats\",\"ACCESS_BACKGROUND_LOCATION,ACCESS_FINE_LOCATION\"") {
+	if !strings.Contains(located, "\"ACCESS_BACKGROUND_LOCATION,ACCESS_FINE_LOCATION. sharing location in chats\"") {
 		t.Fatalf("%s", located)
 	}
 	installed := string(CSV([]Row{{
 		Fact: "request_install_packages", Value: "yes", Evidence: "REQUEST_INSTALL_PACKAGES",
 		Reason: "the update screen installs the downloaded apk",
 	}}))
-	if !strings.Contains(installed, "\"the update screen installs the downloaded apk\",\"REQUEST_INSTALL_PACKAGES\"") {
+	if !strings.Contains(installed, "\"REQUEST_INSTALL_PACKAGES. the update screen installs the downloaded apk\"") {
 		t.Fatalf("%s", installed)
 	}
 	repeated := string(CSV([]Row{

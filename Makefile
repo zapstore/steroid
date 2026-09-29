@@ -17,12 +17,12 @@ endif
 
 build:
 	mkdir -p dist
-	CGO_ENABLED=1 go build -tags fts5 -trimpath -o dist/steroid ./cmd/steroid
+	CGO_ENABLED=1 go build -tags fts5 -trimpath -ldflags '-X main.version=$(or $(REF),dev)' -o dist/steroid ./cmd/steroid
 
 release:
 	mkdir -p dist
 	rm -rf $(DIST)
-	CGO_ENABLED=1 go build -tags fts5 -trimpath -ldflags '-s -w' -o $(DIST) ./cmd/steroid
+	CGO_ENABLED=1 go build -tags fts5 -trimpath -ldflags '-s -w -X main.version=$(or $(REF),dev)' -o $(DIST) ./cmd/steroid
 
 clean:
 	rm -rf dist

@@ -18,15 +18,19 @@ import (
 	"github.com/zapstore/steroid/internal/run"
 )
 
-// parallelJobs is how many listings Seal enriches at once.
+// parallelJobs is how many listings a bundle enriches at once.
 const parallelJobs = 4
 
-// Seal reads the relay database and publishes the next snapshot.
+// avatarMu keeps two listings by the same author from writing one avatar at once.
+var avatarMu sync.Mutex
+
+// Bundle reads the relay database and publishes the next snapshot.
 // It enriches changed listings unless skipEnrich is set.
 // filter is a substring of the app ID. An empty filter selects every changed listing.
-// A non-empty filter selects those listings only. The snapshot still contains the full catalog.
+// A non-empty filter enriches those listings only, fetches only their authors' avatars, and writes a diff of only those apps.
+// The snapshot still contains the full catalog.
 // With skipEnrich, profile avatars are left as they are, and artifact files are included only when the app cache apk matches the listing asset hash.
-func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, filter string, skipEnrich bool) (int64, error) {
+func Bundle(ctx context.Context, data, dbPath, modelDir string, signer Signer, filter string, skipEnrich, debug bool) (int64, error) {
 	raw, err := LoadEvents(ctx, dbPath, signer.PubKey)
 	if err != nil {
 		return 0, err
@@ -74,10 +78,10 @@ func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, fil
 	}
 	writeBlock(runLine(len(next.Listings), enriching, filter, latest))
 	if !skipEnrich {
-		if err := enrichWork(ctx, data, modelDir, work); err != nil {
+		if err := enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug); err != nil {
 			return 0, err
 		}
-		if err := ensureAvatars(ctx, data, next.Profiles); err != nil {
+		if err := ensureAvatars(ctx, data, profilesFor(next, filter)); err != nil {
 			return 0, err
 		}
 	}
@@ -85,7 +89,7 @@ func Seal(ctx context.Context, data, dbPath, modelDir string, signer Signer, fil
 }
 
 // EnrichMatching enriches listings whose app ID contains filter. It does not publish.
-func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string) error {
+func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, debug, force bool) error {
 	if strings.TrimSpace(filter) == "" {
 		return fmt.Errorf("filter is empty")
 	}
@@ -103,8 +107,15 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string) 
 	if len(work) == 0 {
 		return fmt.Errorf("no listings match %q", filter)
 	}
-	writeBlock(enrichLine(len(work), len(next.Listings), filter))
-	err = enrichWork(ctx, data, modelDir, work)
+	if force {
+		for _, listing := range work {
+			if err := removeAppDir(data, listing.AppID); err != nil {
+				return err
+			}
+		}
+	}
+	writeBlock(enrichLine(len(work), len(next.Listings), filter, force))
+	err = enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug)
 	if err != nil {
 		return err
 	}
@@ -112,22 +123,25 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string) 
 }
 
 func runLine(listings int, enriching, filter string, from int64) string {
-	s := fmt.Sprintf("seal %d listings, enrich %s, from %d", listings, enriching, from)
+	s := fmt.Sprintf("bundle %d listings, enrich %s, from %d", listings, enriching, from)
 	if f := strings.TrimSpace(filter); f != "" {
 		s += ", filter " + f
 	}
 	return s
 }
 
-func enrichLine(matched, listings int, filter string) string {
+func enrichLine(matched, listings int, filter string, force bool) string {
 	s := fmt.Sprintf("enrich %d/%d", matched, listings)
 	if f := strings.TrimSpace(filter); f != "" {
 		s += ", filter " + f
 	}
+	if force {
+		s += ", force"
+	}
 	return s
 }
 
-func enrichWork(ctx context.Context, data, modelDir string, work []Listing) error {
+func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures map[string]string, debug bool) error {
 	cfg, err := run.ModelConfig()
 	if err != nil {
 		return err
@@ -135,7 +149,7 @@ func enrichWork(ctx context.Context, data, modelDir string, work []Listing) erro
 	client := &http.Client{Timeout: 2 * time.Minute}
 	var failed atomic.Int32
 	err = processListings(ctx, work, parallelJobs, func(ctx context.Context, _ int, listing Listing) error {
-		bad, err := Enrich(ctx, data, modelDir, listing, cfg, client)
+		bad, err := Enrich(ctx, data, modelDir, listing, pictures[listing.App.PubKey], cfg, client, debug)
 		if bad || err != nil {
 			failed.Add(1)
 		}
@@ -150,7 +164,7 @@ func enrichWork(ctx context.Context, data, modelDir string, work []Listing) erro
 	return err
 }
 
-type sealJob struct {
+type bundleJob struct {
 	n       int
 	listing Listing
 }
@@ -170,7 +184,7 @@ func processListings(ctx context.Context, work []Listing, limit int, fn func(con
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	jobs := make(chan sealJob)
+	jobs := make(chan bundleJob)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var first error
@@ -203,7 +217,7 @@ func processListings(ctx context.Context, work []Listing, limit int, fn func(con
 		}
 		select {
 		case <-ctx.Done():
-		case jobs <- sealJob{n: i + 1, listing: listing}:
+		case jobs <- bundleJob{n: i + 1, listing: listing}:
 			continue
 		}
 		break
@@ -216,48 +230,34 @@ func processListings(ctx context.Context, work []Listing, limit int, fn func(con
 	return ctx.Err()
 }
 
+func picturesByPubkey(profiles []Profile) map[string]string {
+	out := make(map[string]string, len(profiles))
+	for _, profile := range profiles {
+		if profile.Pubkey != "" && profile.Picture != "" {
+			out[profile.Pubkey] = profile.Picture
+		}
+	}
+	return out
+}
+
 func ensureAvatars(ctx context.Context, data string, profiles []Profile) error {
 	var ok int
 	var fails []string
-	note := func(pubkey string, err error) {
-		fails = append(fails, pubkey+": "+oneLine(err.Error()))
+	note := func(profile Profile, err error) {
+		fails = append(fails, profile.Pubkey+": "+oneLine(err.Error()))
 	}
 	for _, profile := range profiles {
 		if profile.Picture == "" {
 			continue
 		}
-		name, err := avatarFilename(profile.Pubkey)
+		wrote, err := storeAvatar(ctx, data, profile.Pubkey, profile.Picture)
 		if err != nil {
-			note(profile.Pubkey, err)
+			note(profile, err)
 			continue
 		}
-		side := filepath.Join(ArtifactDir(data), profile.Pubkey+".url")
-		stored, _ := os.ReadFile(side)
-		webp := filepath.Join(ArtifactDir(data), name)
-		if info, err := os.Stat(webp); err == nil && info.Size() > 0 && strings.TrimSpace(string(stored)) == profile.Picture {
-			continue
+		if wrote {
+			ok++
 		}
-		raw, err := picture.Fetch(ctx, profile.Picture)
-		if err != nil {
-			note(profile.Pubkey, err)
-			continue
-		}
-		encoded, err := picture.Encode(raw, picture.Avatar)
-		if err != nil {
-			note(profile.Pubkey, err)
-			continue
-		}
-		if err := saveAvatar(data, profile.Pubkey, encoded); err != nil {
-			note(profile.Pubkey, err)
-			writeAvatarBlock(ok, fails)
-			return err
-		}
-		if err := os.WriteFile(side, []byte(profile.Picture), 0o644); err != nil {
-			note(profile.Pubkey, err)
-			writeAvatarBlock(ok, fails)
-			return err
-		}
-		ok++
 	}
 	writeAvatarBlock(ok, fails)
 	return nil
@@ -277,6 +277,52 @@ func writeAvatarBlock(ok int, fails []string) {
 		}
 	}
 	writeBlock(b.String())
+}
+
+// storeAvatar writes <pubkey>.webp from a kind 0 picture URL.
+// wrote is false when the URL is empty or the current file already matches it.
+func storeAvatar(ctx context.Context, data, pubkey, pictureURL string) (bool, error) {
+	pictureURL = strings.TrimSpace(pictureURL)
+	pubkey = strings.TrimSpace(pubkey)
+	if pictureURL == "" || pubkey == "" {
+		return false, nil
+	}
+	name, err := avatarFilename(pubkey)
+	if err != nil {
+		return false, err
+	}
+	if avatarCurrent(data, pubkey, name, pictureURL) {
+		return false, nil
+	}
+	raw, err := picture.Fetch(ctx, pictureURL)
+	if err != nil {
+		return false, err
+	}
+	encoded, err := picture.Encode(raw, picture.Avatar)
+	if err != nil {
+		return false, err
+	}
+	avatarMu.Lock()
+	defer avatarMu.Unlock()
+	if avatarCurrent(data, pubkey, name, pictureURL) {
+		return false, nil
+	}
+	if err := saveAvatar(data, pubkey, encoded); err != nil {
+		return false, err
+	}
+	side := filepath.Join(ArtifactDir(data), pubkey+".url")
+	if err := os.WriteFile(side, []byte(pictureURL), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func avatarCurrent(data, pubkey, name, pictureURL string) bool {
+	side := filepath.Join(ArtifactDir(data), pubkey+".url")
+	stored, _ := os.ReadFile(side)
+	webp := filepath.Join(ArtifactDir(data), name)
+	info, err := os.Stat(webp)
+	return err == nil && info.Size() > 0 && strings.TrimSpace(string(stored)) == pictureURL
 }
 
 func saveAvatar(data, pubkey string, webp []byte) error {

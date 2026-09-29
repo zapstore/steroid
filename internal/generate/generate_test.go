@@ -5,10 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zapstore/steroid/internal/config"
+	"github.com/zapstore/steroid/internal/debug"
 	"github.com/zapstore/steroid/internal/scan"
 )
 
@@ -46,6 +49,46 @@ func TestChatSendsMessages(t *testing.T) {
 	}
 }
 
+func TestChatDumpsPromptAndReply(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	sink, err := debug.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := debug.With(t.Context(), sink)
+	if _, err := Chat(ctx, config.Config{
+		ProviderURL: srv.URL,
+		APIKey:      "super-secret",
+		Model:       "m",
+	}, srv.Client(), "m", []Message{
+		{Role: "system", Content: "system text"},
+		{Role: "user", Content: "user text"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := os.ReadFile(filepath.Join(dir, "prompt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(prompt), "system text") || !strings.Contains(string(prompt), "user text") || !strings.Contains(string(prompt), "model: m") {
+		t.Fatalf("%s", prompt)
+	}
+	if strings.Contains(string(prompt), "super-secret") {
+		t.Fatal("prompt dump included the api key")
+	}
+	reply, err := os.ReadFile(filepath.Join(dir, "response.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reply), "A map.") || strings.Contains(string(reply), "super-secret") {
+		t.Fatalf("%s", reply)
+	}
+}
+
 func TestRunSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/chat/completions" {
@@ -66,7 +109,7 @@ func TestRunSummary(t *testing.T) {
 		inner, err := json.Marshal(map[string]string{
 			"about":    "Zapstore is an open Android app store.",
 			"security": "It installs packages.",
-			"facts":    "\"fact\",\"value\",\"reason\",\"permissions\"\n\"ads\",\"no\",\"\",\"\"\n",
+			"facts":    "\"fact\",\"value\",\"notes\"\n\"ads\",\"no\",\"\"\n",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -143,14 +186,19 @@ func TestAssess(t *testing.T) {
 			} `json:"messages"`
 			Tools     []any `json:"tools"`
 			Reasoning struct {
-				Effort string `json:"effort"`
+				Effort  string `json:"effort"`
+				Exclude bool   `json:"exclude"`
 			} `json:"reasoning"`
+			Provider json.RawMessage `json:"provider"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Reasoning.Effort != "none" {
+		if req.Reasoning.Effort != "low" || !req.Reasoning.Exclude {
 			t.Fatalf("reasoning %+v", req.Reasoning)
+		}
+		if len(req.Provider) != 0 {
+			t.Fatalf("provider %s", req.Provider)
 		}
 		body := ""
 		if len(req.Messages) >= 2 {
@@ -232,12 +280,12 @@ func TestAssessEmptySheetStillWrites(t *testing.T) {
 
 func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
 	app := App{Name: "Chat", Summary: "Sends messages.", Website: "https://chat.example"}
-	prev := "\"fact\",\"value\",\"reason\",\"permissions\"\n\"microphone\",\"yes\",\"the record button records audio\",\"RECORD_AUDIO\"\n"
+	prev := "\"fact\",\"value\",\"notes\"\n\"microphone\",\"yes\",\"the record button records audio\"\n"
 	body := Record(app, nil, "Uses:\n", "Sends messages.", "Needs a server login.", prev)
 	if !strings.Contains(body, "Current:\n") || !strings.Contains(body, `"about":"Sends messages."`) || !strings.Contains(body, "the record button records audio") {
 		t.Fatalf("current %s", body)
 	}
-	if !strings.Contains(body, "Scan:\n\"fact\",\"value\",\"reason\",\"permissions\"\n") || !strings.Contains(body, "Listing:\n# Chat\n") || !strings.Contains(body, "Website: https://chat.example") || !strings.Contains(body, "Source:\nUses:\n") {
+	if !strings.Contains(body, "\n---\nScan:\n\"fact\",\"value\",\"notes\"\n") || !strings.Contains(body, "\n---\nListing:\n# Chat\n") || !strings.Contains(body, "Website: https://chat.example") || !strings.Contains(body, "\n---\nSource:\nUses:\n") {
 		t.Fatalf("blocks %s", body)
 	}
 	facts, reasons, noChange, err := ParseSheet("no-change")
@@ -247,6 +295,10 @@ func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
 	notes, err := Reply("Kept.", "no-change", "no-change", prev, nil)
 	if err != nil || notes.Reason["microphone"] != "the record button records audio" {
 		t.Fatalf("%+v %v", notes, err)
+	}
+	empty, err := Reply("", "Stays on the phone.", "no-change", prev, nil)
+	if err != nil || empty.About != "" || empty.Security != "Stays on the phone." {
+		t.Fatalf("%+v %v", empty, err)
 	}
 }
 

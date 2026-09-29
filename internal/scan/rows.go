@@ -100,7 +100,7 @@ func FromReport(rep detect.Report, hash string) []Row {
 			add(fact, strings.Join(ev, ", "))
 		}
 		if !HasInternet(rep.Permissions) {
-			add("offline_capable", "INTERNET permission absent")
+			add("offline_capable", "")
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {

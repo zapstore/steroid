@@ -57,26 +57,3 @@ func TestFactsJSONOmitsUnknown(t *testing.T) {
 		t.Fatalf("%s", raw)
 	}
 }
-
-func TestOpenSourceNeedsSourceMatch(t *testing.T) {
-	mit := AllowOpenSource(Facts{}, "MIT", false)
-	if mit.OpenSource != "unknown" {
-		t.Fatalf("license only %+v", mit)
-	}
-	claimed := AllowOpenSource(Facts{OpenSource: "yes"}, "", true)
-	if claimed.OpenSource != "unknown" {
-		t.Fatalf("claim without a free license %+v", claimed)
-	}
-	got := AllowOpenSource(Facts{OpenSource: "no"}, "Apache-2.0", true)
-	if got.OpenSource != "yes" {
-		t.Fatalf("matched %+v", got)
-	}
-	gpl := AllowOpenSource(Facts{}, "GPL-3.0-only", true)
-	if gpl.OpenSource != "yes" {
-		t.Fatalf("gpl-3.0-only %+v", gpl)
-	}
-	later := AllowOpenSource(Facts{}, "GNU AGPL-3.0-or-later", true)
-	if later.OpenSource != "yes" {
-		t.Fatalf("agpl %+v", later)
-	}
-}

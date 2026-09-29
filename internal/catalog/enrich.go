@@ -1,11 +1,10 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/csv"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/zapstore/steroid/internal/apk"
 	"github.com/zapstore/steroid/internal/config"
+	"github.com/zapstore/steroid/internal/debug"
 	"github.com/zapstore/steroid/internal/doc"
 	"github.com/zapstore/steroid/internal/encode"
 	"github.com/zapstore/steroid/internal/picture"
@@ -36,9 +36,17 @@ const (
 // Enrich writes about, security, facts, icon.webp, and vector for one listing.
 // A failed stage is recorded in the app report. Stages that already succeeded are left in place.
 // The bool is true when any stage failed.
-func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg config.Config, client *http.Client) (bool, error) {
+func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorPicture string, cfg config.Config, client *http.Client, debugOn bool) (bool, error) {
 	rep := &appReport{id: listing.AppID}
 	defer rep.flush()
+	if debugOn {
+		if dir, err := debug.AppDir(data, listing.AppID); err == nil {
+			if sink, err := debug.Open(dir); err == nil {
+				ctx = debug.With(ctx, sink)
+				rep.debugDir = dir
+			}
+		}
+	}
 	in, _, err := ListingInput(listing, ArtifactDir(data))
 	if err != nil {
 		rep.fail("listing", err)
@@ -100,6 +108,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 	}
 
 	var rows []scan.Row
+	var project string
 	iconFrom := m.Icon
 	if early.Download {
 		file, err := openAPK(ctx, dir, in)
@@ -108,11 +117,14 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 		} else {
 			rep.mark("apk")
 			defer file.Close()
-			if early.Scan {
-				scanned, err := run.Scan(file)
-				if err != nil {
+			scanned, dump, err := run.Scan(file)
+			if err != nil {
+				if early.Scan {
 					rep.fail("scan", err)
-				} else {
+				}
+			} else {
+				project = dump
+				if early.Scan {
 					rows = scanned
 					hasFacts = true
 					rep.mark("scan")
@@ -145,6 +157,11 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 			iconFrom = in.IconURL
 		}
 	}
+	if _, err := storeAvatar(ctx, data, listing.App.PubKey, authorPicture); err != nil {
+		rep.fail("avatar", err)
+	} else if strings.TrimSpace(authorPicture) != "" {
+		rep.mark("avatar")
+	}
 
 	factsHash := m.Facts
 	if len(rows) > 0 {
@@ -168,14 +185,18 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 	prevSecurity := readText(dir, fileSecurity)
 	about := prevAbout
 	security := prevSecurity
+	var factBytes []byte
 	var reason map[string]string
-	matched := false
-	if tree != nil {
-		ok, _ := source.Compare(tree, in.AppID, in.Version)
-		matched = ok
-	}
 	if w.About || (w.Security && tree != nil) {
-		summary, sec, factBytes, _, err := run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, in.APKHash, rows, prevAbout, prevSecurity, readText(dir, fileFacts))
+		if project == "" {
+			if file, err := openAPK(ctx, dir, in); err == nil {
+				_, project, _ = run.Scan(file)
+				file.Close()
+			}
+		}
+		var summary, sec string
+		var err error
+		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, modelDir, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
 		if err != nil {
 			if w.About {
 				rep.fail("about", err)
@@ -185,6 +206,9 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 			}
 		} else {
 			about = keptText(summary, prevAbout, w.About)
+			if w.About && blankNoChange(summary, prevAbout) {
+				rep.fail("about", errors.New("about no-change with empty current text"))
+			}
 			if w.Security && tree != nil {
 				security = keptText(sec, prevSecurity, true)
 				if !noChange(sec) {
@@ -212,7 +236,12 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 		rep.mark("security")
 	}
 	if len(rows) > 0 && (factsHash != m.Facts || (w.Security && tree != nil)) {
-		if err := writeText(dir, fileFacts, factCSV(rows, reason, matched)); err != nil {
+		// Overview already added listing facts the scan cannot see, such as e2ee.
+		sheet := factCSV(rows, reason)
+		if len(factBytes) > 0 {
+			sheet = string(factBytes)
+		}
+		if err := writeText(dir, fileFacts, sheet); err != nil {
 			rep.fail("facts", err)
 			return true, err
 		}
@@ -245,7 +274,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, cfg con
 		rep.fail("cache", err)
 		return true, err
 	}
-	if about != "" && hasIcon {
+	if hasIcon {
 		_ = os.Remove(filepath.Join(dir, fileAPK))
 	}
 	return rep.failed(), nil
@@ -289,8 +318,8 @@ func iconFromAPK(path string) ([]byte, error) {
 	return picture.Encode(png, picture.Icon)
 }
 
-func factCSV(rows []scan.Row, reason map[string]string, openSource bool) string {
-	sheet := make([]scan.Row, 0, len(rows)+1)
+func factCSV(rows []scan.Row, reason map[string]string) string {
+	sheet := make([]scan.Row, 0, len(rows))
 	for _, row := range rows {
 		if row.Fact == "" || (row.Value != "yes" && row.Value != "no") {
 			continue
@@ -300,36 +329,21 @@ func factCSV(rows []scan.Row, reason map[string]string, openSource bool) string 
 		}
 		sheet = append(sheet, row)
 	}
-	if openSource {
-		sheet = append(sheet, scan.Row{Fact: "open_source", Value: "yes", Basis: "apk"})
-	}
 	return string(scan.CSV(sheet))
 }
 
 func reasonColumn(raw []byte) map[string]string {
-	rows, err := csv.NewReader(bytes.NewReader(raw)).ReadAll()
-	if err != nil || len(rows) < 2 {
-		return nil
-	}
-	factIdx, reasonIdx := -1, -1
-	for i, col := range rows[0] {
-		switch strings.TrimSpace(col) {
-		case "fact":
-			factIdx = i
-		case "reason":
-			reasonIdx = i
-		}
-	}
-	if factIdx < 0 || reasonIdx < 0 {
+	rows, err := scan.Records(string(raw))
+	if err != nil || len(rows) == 0 {
 		return nil
 	}
 	out := map[string]string{}
-	for _, row := range rows[1:] {
-		if factIdx >= len(row) || reasonIdx >= len(row) {
+	for _, row := range rows {
+		if len(row) < 3 {
 			continue
 		}
-		if text := strings.TrimSpace(row[reasonIdx]); text != "" {
-			out[strings.TrimSpace(row[factIdx])] = text
+		if text := strings.TrimSpace(row[2]); text != "" {
+			out[strings.TrimSpace(row[0])] = text
 		}
 	}
 	return out
@@ -348,6 +362,11 @@ func writeVectorText(ctx context.Context, dir, modelDir, text string) error {
 		vec[i] = byte(n)
 	}
 	return os.WriteFile(filepath.Join(dir, "vector"), vec, 0o644)
+}
+
+// blankNoChange is a no-change reply when there is no previous text to keep.
+func blankNoChange(got, prev string) bool {
+	return noChange(got) && strings.TrimSpace(prev) == ""
 }
 
 func keptText(got, prev string, rewrite bool) string {
