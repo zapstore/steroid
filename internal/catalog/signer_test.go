@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"net"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 )
@@ -38,4 +41,63 @@ func TestBunkerTargetAllowsLoopbackWS(t *testing.T) {
 	if _, _, err := bunkerTarget("bunker://" + pk); err == nil {
 		t.Fatal("missing relay was accepted")
 	}
+}
+
+func TestOpenBunkerRefusedFailsImmediately(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err = OpenSigner(t.Context(), bunkerURL(addr))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("took %s: %v", elapsed, err)
+	}
+}
+
+func TestOpenBunkerSilentRelayTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				<-t.Context().Done()
+				conn.Close()
+			}()
+		}
+	}()
+	start := time.Now()
+	_, err = OpenSigner(t.Context(), bunkerURL(ln.Addr().String()))
+	elapsed := time.Since(start)
+	ln.Close()
+	<-done
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if elapsed > bunkerHandshakeTimeout+2*time.Second {
+		t.Fatalf("took %s: %v", elapsed, err)
+	}
+}
+
+func bunkerURL(addr string) string {
+	pk := strings.Repeat("ab", 32)
+	relay := "ws://" + addr + "/token"
+	return "bunker://" + pk + "?relay=" + url.QueryEscape(relay) + "&secret=once"
 }
