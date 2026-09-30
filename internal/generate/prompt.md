@@ -100,4 +100,4 @@ One or two sentences. The facts are already shown. Do not repeat them. Say only 
 | a permission note shows the data leaves the phone | what leaves |
 | a permission note shows the data stays | that it stays on the phone |
 
-Do not use an emoji. An important notice goes first: what leaves the phone, or another consequence the person should see before the rest. Then a line that is only `---`, then the paragraph. Data staying on the phone is not a notice. Omit the notice and the `---` when there is nothing to put first.
+Do not use an emoji. A notice is one sentence the person should see first: what leaves the phone, or an access with no shown use. Then a line that is only `---`, then the paragraph. The paragraph names only what that sentence left out, such as the library or the screen. Do not write the notice again. Data staying on the phone is not a notice. Omit the notice and the `---` when there is nothing to put first. Omit the paragraph when it would only repeat the notice.
