@@ -212,10 +212,11 @@ func TestBundleFilesFollowEventKind(t *testing.T) {
 		}
 	}
 	onlyAsset := tarFiles(t, mustBundle(t, data, signer, Diff{Apps: []string{id}, Events: []nostr.Event{asset}}))
-	for _, name := range []string{"security", "facts"} {
-		if _, ok := onlyAsset[id+"/"+name]; !ok {
-			t.Fatalf("missing %s", name)
-		}
+	if _, ok := onlyAsset[id+"/security"]; !ok {
+		t.Fatal("missing security")
+	}
+	if _, ok := onlyAsset[id+"/facts"]; ok {
+		t.Fatal("shipped facts")
 	}
 	for _, name := range []string{"about", "vector", "icon.webp"} {
 		if _, ok := onlyAsset[id+"/"+name]; ok {

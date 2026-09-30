@@ -180,6 +180,11 @@ func Reasons(rows []Row) []Row {
 	return out
 }
 
+// IsPermission reports a fact row that names an Android permission.
+func IsPermission(fact string) bool {
+	return needsReason(fact)
+}
+
 func needsReason(fact string) bool {
 	switch fact {
 	case "contacts", "read_sms", "receive_sms", "send_sms",

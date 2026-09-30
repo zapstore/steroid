@@ -354,7 +354,7 @@ func apkOf(listing Listing) (url, hash string) {
 
 // BuildBundle writes a client bundle for from→to. Artifact bytes are the latest files.
 // about, vector, and icon.webp ship only when the diff has that app's kind 32267 event.
-// security and facts ship only when the diff has that app's kind 3063 event.
+// security ships only when the diff has that app's kind 3063 event.
 // The client keeps the stored file for a missing member.
 func BuildBundle(ctx context.Context, data string, from, to, bundledAt int64, diff Diff, signer Signer) ([]byte, error) {
 	raw, err := MarshalDiff(diff)
@@ -455,7 +455,7 @@ func enrichmentFiles(appID string, listing, asset map[string]struct{}) []string 
 		names = append(names, "about", "vector", "icon.webp")
 	}
 	if _, ok := asset[appID]; ok {
-		names = append(names, "security", "facts")
+		names = append(names, "security")
 	}
 	return names
 }

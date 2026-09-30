@@ -33,7 +33,8 @@ const (
 	fileAPK      = "apk"
 )
 
-// Enrich writes about, security, facts, icon.webp, and vector for one listing.
+// Enrich writes about, security, icon.webp, and vector for one listing.
+// security holds the fact CSV, the permission ids, and the prose.
 // A failed stage is recorded in the app report. Stages that already succeeded are left in place.
 // The bool is true when any stage failed.
 func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorPicture string, cfg config.Config, client *http.Client, debugOn bool) (bool, error) {
@@ -208,9 +209,9 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 	}
 
 	prevAbout := readText(dir, fileAbout)
-	prevSecurity := readText(dir, fileSecurity)
+	prevCSV, prevPerms, prevProse := storedParts(dir)
 	about := prevAbout
-	security := prevSecurity
+	security := prevProse
 	var factBytes []byte
 	var reason map[string]string
 	if w.About || w.Security {
@@ -224,7 +225,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 		var summary, sec string
 		var err error
-		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
+		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, rows, prevAbout, prevProse, prevCSV, project)
 		if err != nil {
 			if w.About {
 				rep.fail("about", err)
@@ -238,8 +239,8 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 				rep.fail("about", errors.New("about no-change with empty current text"))
 			}
 			if w.Security {
-				security = keptText(sec, prevSecurity, true)
-				if blankNoChange(sec, prevSecurity) {
+				security = keptText(sec, prevProse, true)
+				if blankNoChange(sec, prevProse) {
 					rep.fail("security", errors.New("security no-change with empty current text"))
 				}
 				if !noChange(sec) {
@@ -263,33 +264,35 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 		rep.mark("about")
 	}
-	if w.Security && !rep.failedStage("security") {
-		if security != prevSecurity {
-			if err := writeText(dir, fileSecurity, security); err != nil {
-				rep.fail("security", err)
-				return true, err
-			}
-		}
-		rep.mark("security")
-	}
-	if len(rows) > 0 && (factsHash != m.Facts || !hasFacts || w.Security) {
-		rep.step("facts")
-		// Overview already added listing facts the scan cannot see, such as e2ee.
+	writeSecurity := w.Security && !rep.failedStage("security")
+	writeFacts := len(rows) > 0 && (factsHash != m.Facts || !hasFacts || w.Security)
+	if writeSecurity || writeFacts {
+		rep.step("security")
 		sheet := factCSV(rows, reason)
 		if len(factBytes) > 0 {
 			sheet = string(factBytes)
-		} else {
+		} else if len(rows) > 0 {
 			src := ""
 			if tree != nil {
 				src = "source"
 			}
 			sheet = factCSV(run.ClosedFacts(rows, run.AppOf(in), src, tree != nil), reason)
+		} else {
+			sheet = prevCSV
 		}
+		sheet = withoutPermissions(sheet)
 		if strings.TrimSpace(sheet) == "" {
-			rep.fail("facts", errors.New("empty"))
-		} else if err := writeText(dir, fileFacts, sheet); err != nil {
-			rep.fail("facts", err)
-			return true, err
+			rep.fail("security", errors.New("empty"))
+		} else {
+			body := securityFile(sheet, permissionLine(project, rows, prevPerms), security)
+			if err := writeText(dir, fileSecurity, body); err != nil {
+				rep.fail("security", err)
+				return true, err
+			}
+			_ = os.Remove(filepath.Join(dir, fileFacts))
+			if writeSecurity {
+				rep.mark("security")
+			}
 		}
 	}
 	vectorText := feature
@@ -452,15 +455,22 @@ func hashText(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// factsReady is a facts file that already has the rows every app must keep.
+// storedParts reads the security file. A legacy prose note returns that note and any old facts file.
+func storedParts(dir string) (csv, perms, prose string) {
+	if csv, perms, prose, ok := splitSecurity(readText(dir, fileSecurity)); ok {
+		return csv, perms, prose
+	}
+	return readText(dir, fileFacts), "", strings.TrimSpace(readText(dir, fileSecurity))
+}
+
+// factsReady is a security file whose fact CSV already has the rows every app must keep.
 func factsReady(dir string) bool {
-	body, err := os.ReadFile(filepath.Join(dir, fileFacts))
-	if err != nil || strings.TrimSpace(string(body)) == "" {
+	csv, _, _, ok := splitSecurity(readText(dir, fileSecurity))
+	if !ok {
 		return false
 	}
-	text := string(body)
 	for _, fact := range []string{"no_google_services", "offline_capable"} {
-		if !strings.Contains(text, `"`+fact+`"`) {
+		if !strings.Contains(csv, `"`+fact+`"`) {
 			return false
 		}
 	}
