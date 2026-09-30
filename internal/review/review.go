@@ -48,14 +48,11 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 }
 
 func once(ctx context.Context, cfg config.Config, client *http.Client, model string, app generate.App, sheet []scan.Row, digest, about, security, prevFacts string) (generate.Result, error) {
-	var got generateReply
-	if _, err := generate.Chat(ctx, cfg, client, model, []generate.Message{
-		{Role: "system", Content: generate.Prompt},
-		{Role: "user", Content: generate.Record(app, sheet, digest, about, security, prevFacts)},
-	}, &got); err != nil {
+	aboutText, securityText, factsText, err := generate.Turn(ctx, cfg, client, model, generate.Record(app, sheet, digest, about, security), about, security)
+	if err != nil {
 		return generate.Result{}, err
 	}
-	notes, err := generate.Reply(got.About, got.Security, got.Facts, prevFacts, sheet)
+	notes, err := generate.Reply(aboutText, securityText, factsText, prevFacts, sheet)
 	if err != nil {
 		return generate.Result{}, fmt.Errorf("%s: %w", model, err)
 	}
@@ -67,11 +64,4 @@ func once(ctx context.Context, cfg config.Config, client *http.Client, model str
 		Summary:       notes.About,
 		ProviderModel: model,
 	}, nil
-}
-
-// generateReply matches generate.modelReply. It is local because that type is not exported.
-type generateReply struct {
-	About    string `json:"about"`
-	Security string `json:"security"`
-	Facts    string `json:"facts"`
 }

@@ -187,14 +187,14 @@ func TestAssess(t *testing.T) {
 			Tools     []any `json:"tools"`
 			Reasoning struct {
 				Effort  string `json:"effort"`
-				Exclude bool   `json:"exclude"`
+				Enabled *bool  `json:"enabled"`
 			} `json:"reasoning"`
 			Provider json.RawMessage `json:"provider"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Reasoning.Effort != "low" || !req.Reasoning.Exclude {
+		if req.Reasoning.Effort != "none" || req.Reasoning.Enabled == nil || *req.Reasoning.Enabled {
 			t.Fatalf("reasoning %+v", req.Reasoning)
 		}
 		if len(req.Provider) != 0 {
@@ -204,7 +204,10 @@ func TestAssess(t *testing.T) {
 		if len(req.Messages) >= 2 {
 			body = req.Messages[1].Content
 		}
-		if !strings.Contains(body, "Current:") || !strings.Contains(body, "Scan:") || !strings.Contains(body, "Listing:") || !strings.Contains(body, "Source:") {
+		if strings.Contains(body, "Current:") || strings.Contains(body, `"about"`) || strings.Contains(body, `"security"`) {
+			t.Fatalf("empty previous sent %s", body)
+		}
+		if !strings.Contains(body, "Scan:") || !strings.Contains(body, "Listing:") || !strings.Contains(body, "Source:") {
 			t.Fatalf("record %s", body)
 		}
 		if !strings.Contains(body, "android/") {
@@ -228,6 +231,39 @@ func TestAssess(t *testing.T) {
 	}
 	if !strings.Contains(got.About, "sideloading") || !strings.Contains(got.Security, "install") {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestMissingSecurityIsRewritten(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A task list.\",\"security\":\"no-change\",\"facts\":\"no-change\"}"}}]}`))
+			return
+		}
+		if len(req.Messages) < 4 || !strings.Contains(req.Messages[len(req.Messages)-1].Content, "security is missing") {
+			t.Fatalf("rewrite %d %+v", n, req.Messages)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A task list.\",\"security\":\"Data stays on the phone.\",\"facts\":\"no-change\"}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	got, err := Assess(t.Context(), config.Config{
+		ProviderURL: srv.URL,
+		APIKey:      "k",
+		Model:       "m",
+	}, srv.Client(), sampleInput().App, nil, "", "", "", "")
+	if err != nil || got.Security != "Data stays on the phone." || n != 2 {
+		t.Fatalf("n=%d %+v %v", n, got, err)
 	}
 }
 
@@ -297,9 +333,17 @@ func TestReplyRejectsOtherBuild(t *testing.T) {
 func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
 	app := App{Name: "Chat", Summary: "Sends messages.", Website: "https://chat.example"}
 	prev := "\"fact\",\"value\",\"notes\"\n\"microphone\",\"yes\",\"the record button records audio\"\n"
-	body := Record(app, nil, "Uses:\n", "Sends messages.", "Needs a server login.", prev)
-	if !strings.Contains(body, "Current:\n") || !strings.Contains(body, `"about":"Sends messages."`) || !strings.Contains(body, "the record button records audio") {
+	body := Record(app, nil, "Uses:\n", "Sends messages.", "Needs a server login.")
+	if !strings.Contains(body, "Current:\n") || !strings.Contains(body, `"about":"Sends messages."`) || strings.Contains(body, `"facts"`) {
 		t.Fatalf("current %s", body)
+	}
+	fresh := Record(app, nil, "", "", "")
+	if strings.Contains(fresh, "Current:") || strings.Contains(fresh, `"about"`) || strings.Contains(fresh, `"security"`) || !strings.Contains(fresh, "about: write the paragraph") || !strings.Contains(fresh, "security: write the summary") || !strings.Contains(fresh, "Scan:\n") {
+		t.Fatalf("empty current %s", fresh)
+	}
+	partial := Record(app, nil, "", "Sends messages.", "")
+	if !strings.Contains(partial, `"about":"Sends messages."`) || strings.Contains(partial, `"security"`) || strings.Contains(partial, "about: write the paragraph") || !strings.Contains(partial, "security: write the summary") {
+		t.Fatalf("partial %s", partial)
 	}
 	if !strings.Contains(body, "\n---\nScan:\n\"fact\",\"value\",\"notes\"\n") || !strings.Contains(body, "\n---\nListing:\n# Chat\n") || !strings.Contains(body, "Website: https://chat.example") || !strings.Contains(body, "\n---\nSource:\nUses:\n") {
 		t.Fatalf("blocks %s", body)

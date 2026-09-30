@@ -121,12 +121,12 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 		if model == "" {
 			continue
 		}
-		var out modelReply
-		if err := complete(ctx, cfg, client, model, Prompt, Record(app, sheet, source, about, security, prevFacts), &out); err != nil {
-			last = err
+		aboutText, securityText, factsText, err := Turn(ctx, cfg, client, model, Record(app, sheet, source, about, security), about, security)
+		if err != nil {
+			last = fmt.Errorf("%s: %w", model, err)
 			continue
 		}
-		notes, err := Reply(out.About, out.Security, out.Facts, prevFacts, sheet)
+		notes, err := Reply(aboutText, securityText, factsText, prevFacts, sheet)
 		if err != nil {
 			last = fmt.Errorf("%s: %w", model, err)
 			continue
@@ -142,22 +142,28 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 
 // Record is the user message: current notes, this scan, the listing, then source.
 // The parts are separated by a line that is only "---".
-func Record(app App, sheet []scan.Row, source, about, security, prevFacts string) string {
+func Record(app App, sheet []scan.Row, source, about, security string) string {
 	var b strings.Builder
-	b.WriteString("Current:\n")
-	raw, err := json.Marshal(struct {
-		About    string `json:"about"`
-		Security string `json:"security"`
-		Facts    string `json:"facts"`
+	if strings.TrimSpace(about) == "" {
+		b.WriteString("about: write the paragraph. no-change is invalid.\n")
+	}
+	if strings.TrimSpace(security) == "" {
+		b.WriteString("security: write the summary. no-change is invalid.\n")
+	}
+	current := struct {
+		About    string `json:"about,omitempty"`
+		Security string `json:"security,omitempty"`
 	}{
 		About:    strings.TrimSpace(about),
 		Security: strings.TrimSpace(security),
-		Facts:    strings.TrimSpace(prevFacts),
-	})
-	if err != nil {
-		raw = []byte(`{"about":"","security":"","facts":""}`)
 	}
-	b.Write(raw)
+	if current.About != "" || current.Security != "" {
+		raw, err := json.Marshal(current)
+		if err == nil {
+			b.WriteString("Current:\n")
+			b.Write(raw)
+		}
+	}
 	writePart(&b, "Scan:\n")
 	if csvText := scan.CSV(sheet); len(csvText) > 0 {
 		b.Write(csvText)
@@ -177,6 +183,10 @@ func Record(app App, sheet []scan.Row, source, about, security, prevFacts string
 }
 
 func writePart(b *strings.Builder, label string) {
+	if b.Len() == 0 {
+		b.WriteString(label)
+		return
+	}
 	if !strings.HasSuffix(b.String(), "\n") {
 		b.WriteByte('\n')
 	}
@@ -210,6 +220,52 @@ func writeListing(b *strings.Builder, app App) {
 	writeLine(b, "Website", app.Website)
 	writeLine(b, "License", app.License)
 	writeLine(b, "Repository", app.Repository)
+}
+
+// Turn asks for the overview. A no-change reply for a missing summary is sent back once.
+func Turn(ctx context.Context, cfg config.Config, client *http.Client, model, user, prevAbout, prevSecurity string) (string, string, string, error) {
+	var out modelReply
+	if err := complete(ctx, cfg, client, model, Prompt, user, &out); err != nil {
+		return "", "", "", err
+	}
+	if !missingText(out.About, prevAbout) && !missingText(out.Security, prevSecurity) {
+		return out.About, out.Security, out.Facts, nil
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return "", "", "", err
+	}
+	var again modelReply
+	if _, err := Chat(ctx, cfg, client, model, []Message{
+		{Role: "system", Content: Prompt},
+		{Role: "user", Content: user},
+		{Role: "assistant", Content: string(raw)},
+		{Role: "user", Content: rewriteAsk(out.About, out.Security, prevAbout, prevSecurity)},
+	}, &again); err != nil {
+		return "", "", "", err
+	}
+	if missingText(again.About, prevAbout) {
+		return "", "", "", fmt.Errorf("about no-change with no stored text")
+	}
+	if missingText(again.Security, prevSecurity) {
+		return "", "", "", fmt.Errorf("security no-change with no stored text")
+	}
+	return again.About, again.Security, again.Facts, nil
+}
+
+func missingText(got, prev string) bool {
+	return strings.EqualFold(strings.TrimSpace(got), "no-change") && strings.TrimSpace(prev) == ""
+}
+
+func rewriteAsk(about, security, prevAbout, prevSecurity string) string {
+	var b strings.Builder
+	if missingText(about, prevAbout) {
+		b.WriteString("about is missing. Write the paragraph. no-change is invalid.\n")
+	}
+	if missingText(security, prevSecurity) {
+		b.WriteString("security is missing. Write the summary. no-change is invalid.\n")
+	}
+	return b.String()
 }
 
 // Reply reads the model object. A no-change facts sheet keeps the previous CSV.
@@ -373,10 +429,10 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 		"model":           model,
 		"messages":        wire,
 		"response_format": map[string]string{"type": "json_object"},
-		// Low effort still thinks. exclude leaves that trace out of the response. This client never reads it.
+		// This call is a checklist. A reasoning trace is unused, and low effort still spends it.
 		"reasoning": map[string]any{
-			"effort":  "low",
-			"exclude": true,
+			"effort":  "none",
+			"enabled": false,
 		},
 	}
 	ctx, cancel := context.WithTimeout(ctx, completeTimeout)
@@ -430,7 +486,7 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 
 func promptDump(model string, msgs []Message) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "model: %s\nresponse_format: json_object\nreasoning: low, excluded\n", model)
+	fmt.Fprintf(&b, "model: %s\nresponse_format: json_object\nreasoning: none, disabled\n", model)
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "\n## %s\n%s\n", m.Role, m.Content)
 	}
