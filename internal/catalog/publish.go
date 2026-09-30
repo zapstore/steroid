@@ -14,7 +14,7 @@ import (
 // Publish stores snapshot n+1 and the adjacent bundle. Identical state does nothing.
 // filter keeps the diff to apps whose id contains it, including their artifact files when the events are unchanged.
 // matchAPK includes an app's artifact files only when its cache apk line equals the listing asset hash.
-func Publish(ctx context.Context, data string, next State, signer Signer, sealedAt int64, filter string, matchAPK bool) (int64, error) {
+func Publish(ctx context.Context, data string, next State, signer Signer, bundledAt int64, filter string, matchAPK bool) (int64, error) {
 	if err := os.MkdirAll(SnapDir(data), 0o755); err != nil {
 		return 0, err
 	}
@@ -49,7 +49,7 @@ func Publish(ctx context.Context, data string, next State, signer Signer, sealed
 		return latest, nil
 	}
 	nextN := latest + 1
-	body, err := BuildBundle(ctx, data, latest, nextN, sealedAt, diff, signer)
+	body, err := BuildBundle(ctx, data, latest, nextN, bundledAt, diff, signer)
 	if err != nil {
 		return 0, err
 	}
@@ -145,7 +145,7 @@ func pictureAvatars(data string, prev, next []Profile) []string {
 }
 
 // EnsureBundle returns the cached from→to bundle, building it when absent.
-func EnsureBundle(ctx context.Context, data string, from, to int64, stackPubkey string, signer Signer, sealedAt int64) ([]byte, error) {
+func EnsureBundle(ctx context.Context, data string, from, to int64, stackPubkey string, signer Signer, bundledAt int64) ([]byte, error) {
 	path := BundlePath(data, from, to)
 	if raw, err := os.ReadFile(path); err == nil {
 		return raw, nil
@@ -172,7 +172,7 @@ func EnsureBundle(ctx context.Context, data string, from, to int64, stackPubkey 
 	} else {
 		diff.Avatars = pictureAvatars(data, prev.Profiles, next.Profiles)
 	}
-	body, err := BuildBundle(ctx, data, from, to, sealedAt, diff, signer)
+	body, err := BuildBundle(ctx, data, from, to, bundledAt, diff, signer)
 	if err != nil {
 		return nil, err
 	}

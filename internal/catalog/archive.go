@@ -97,7 +97,7 @@ func packUnsigned(members []member) ([]byte, error) {
 	return writeArchive(members)
 }
 
-func pack(ctx context.Context, members []member, from, to, sealedAt int64, signer *Signer) ([]byte, error) {
+func pack(ctx context.Context, members []member, from, to, bundledAt int64, signer *Signer) ([]byte, error) {
 	slices.SortFunc(members, func(a, b member) int { return strings.Compare(a.Name, b.Name) })
 	all := members
 	if signer != nil {
@@ -105,7 +105,7 @@ func pack(ctx context.Context, members []member, from, to, sealedAt int64, signe
 		// covers thousands of apps. NIP-44 plaintext maxes at 64KB. The signed
 		// event tags only the index; the index lists every other member hash.
 		index := fileIndex(members)
-		manifest, err := signManifest(ctx, from, to, sealedAt, []member{index}, *signer)
+		manifest, err := signManifest(ctx, from, to, bundledAt, []member{index}, *signer)
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +195,7 @@ func fileIndex(members []member) member {
 	return member{Name: "index", Data: buf.Bytes()}
 }
 
-func signManifest(ctx context.Context, from, to, sealedAt int64, members []member, signer Signer) ([]byte, error) {
+func signManifest(ctx context.Context, from, to, bundledAt int64, members []member, signer Signer) ([]byte, error) {
 	tags := nostr.Tags{
 		{"d", fmt.Sprintf("%d-%d-%d", from, to, Version)},
 		{"from", fmt.Sprintf("%d", from)},
@@ -206,7 +206,7 @@ func signManifest(ctx context.Context, from, to, sealedAt int64, members []membe
 		sum := sha256.Sum256(m.Data)
 		tags = append(tags, nostr.Tag{"file", m.Name, hex.EncodeToString(sum[:])})
 	}
-	event := nostr.Event{CreatedAt: nostr.Timestamp(sealedAt), Kind: manifestKind, Tags: tags}
+	event := nostr.Event{CreatedAt: nostr.Timestamp(bundledAt), Kind: manifestKind, Tags: tags}
 	if err := signer.Sign(ctx, &event); err != nil {
 		return nil, err
 	}
