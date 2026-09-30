@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDebugStepPrints(t *testing.T) {
@@ -16,17 +17,34 @@ func TestDebugStepPrints(t *testing.T) {
 	os.Stderr = w
 	defer func() { os.Stderr = old }()
 
+	t0 := time.Unix(0, 0)
+	times := []time.Time{
+		t0,
+		t0.Add(2 * time.Second),
+		t0.Add(2 * time.Second),
+		t0.Add(2500 * time.Millisecond),
+	}
+	var n int
+	prev := mono
+	mono = func() time.Time {
+		t := times[n]
+		n++
+		return t
+	}
+	defer func() { mono = prev }()
+
 	rep := &appReport{id: "com.example", live: true}
 	rep.step("scan")
 	rep.step("  ")
 	(&appReport{id: "com.example"}).step("scan")
 	rep.fail("apk", errString("timeout"))
+	rep.closeStep()
 	_ = w.Close()
 	raw, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != "com.example scan\ncom.example fail apk: timeout\n" {
+	if string(raw) != "com.example scan\ncom.example scan 2.0s\ncom.example fail apk: timeout\ncom.example fail apk: timeout 500ms\n" {
 		t.Fatalf("%q", raw)
 	}
 }

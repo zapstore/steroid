@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 var reportMu sync.Mutex
@@ -18,13 +19,19 @@ type appReport struct {
 	fails    []string
 	debugDir string
 	live     bool
+	begun    string
+	begunAt  time.Time
 }
+
+// mono is the clock for step durations. Tests replace it.
+var mono = time.Now
 
 func (r *appReport) mark(stage string) {
 	r.ok = append(r.ok, stage)
 }
 
-// step prints one line while the stage is running. It is a no-op unless --debug is set.
+// step prints the stage as it starts, then prints it again with the elapsed time when the next stage starts.
+// It is a no-op unless --debug is set.
 func (r *appReport) step(msg string) {
 	if r == nil || !r.live {
 		return
@@ -33,7 +40,33 @@ func (r *appReport) step(msg string) {
 	if msg == "" {
 		return
 	}
+	r.closeStep()
+	r.begun = msg
+	r.begunAt = mono()
 	writeBlock(r.id + " " + msg)
+}
+
+func (r *appReport) closeStep() {
+	if r == nil || !r.live || r.begun == "" {
+		return
+	}
+	writeBlock(r.id + " " + r.begun + " " + fmtDur(mono().Sub(r.begunAt)))
+	r.begun = ""
+}
+
+func fmtDur(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	m := d / time.Minute
+	s := (d % time.Minute) / time.Second
+	return fmt.Sprintf("%dm%ds", m, s)
 }
 
 func (r *appReport) fail(stage string, err error) {
@@ -121,6 +154,7 @@ func (r *appReport) String() string {
 }
 
 func (r *appReport) flush() {
+	r.closeStep()
 	writeBlock(r.String())
 }
 
