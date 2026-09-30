@@ -4,16 +4,15 @@ package catalog
 // Bump it when cached about, security, facts, or vectors should be redone.
 const enrichVersion = 1
 
-// aboutSkipped is the cache about field when the listing text is enough and no about file is stored.
+// aboutSkipped is a legacy cache value. A missing about file is redone even when the cache says this.
 const aboutSkipped = "skipped"
 
 // memo is the cache file for one app. Hashes are hex SHA-256 of the inputs
 // that produced the current outputs. Version is enrichVersion when those
-// outputs are current. About is aboutSkipped when the listing text stands in for the about file.
+// outputs are current.
 type memo struct {
 	Version int
 	APK     string
-	Commit  string
 	Feature string
 	Facts   string
 	Icon    string
@@ -22,22 +21,22 @@ type memo struct {
 
 // observed is the listing as it is now, plus which output files already exist.
 type observed struct {
-	APK        string
-	Feature    string
-	Facts      string
-	Commit     string
-	Repo       bool
-	NeedReadme bool
-	HasAbout   bool
-	HasIcon    bool
-	HasVector  bool
-	HasFacts   bool
+	APK         string
+	Feature     string
+	Facts       string
+	Commit      string
+	Repo        bool
+	NeedReadme  bool
+	HasAbout    bool
+	HasSecurity bool
+	HasIcon     bool
+	HasVector   bool
+	HasFacts    bool
 }
 
 // work is what this run still has to do.
-// About follows the feature text and the commit. Security follows the scanner
-// facts and the commit. The vector follows the feature text, and the about
-// text when that text changes after the model replies.
+// About follows the feature text. Security follows the scanner facts.
+// The vector follows the feature text. Clone runs when this run reads the repository.
 type work struct {
 	Clone    bool
 	Download bool
@@ -52,20 +51,11 @@ func plan(m memo, o observed) work {
 		m = memo{}
 	}
 	var w work
-	w.Clone = o.Repo && o.Commit != "" && (o.Commit != m.Commit || (o.NeedReadme && m.Feature == ""))
-	w.Scan = o.APK != m.APK || !o.HasFacts || (o.Repo && o.Commit != "" && o.Commit != m.Commit)
+	w.Scan = o.APK != m.APK || !o.HasFacts
 	w.Download = w.Scan || !o.HasIcon
-	w.About = o.Feature != m.Feature || (o.Repo && o.Commit != "" && o.Commit != m.Commit) || aboutMissing(m, o)
-	w.Security = o.Repo && o.Commit != "" && (o.Facts != m.Facts || o.Commit != m.Commit)
+	w.About = o.Feature != m.Feature || !o.HasAbout
+	w.Security = !o.HasSecurity || o.Facts != m.Facts
 	w.Vector = o.Feature != m.Feature || !o.HasVector
+	w.Clone = o.Repo && o.Commit != "" && (w.About || w.Security || (o.NeedReadme && m.Feature == ""))
 	return w
-}
-
-// aboutMissing is true when an about file should exist and does not.
-// A recorded skip means the listing text is the description, so a missing file is finished work.
-func aboutMissing(m memo, o observed) bool {
-	if o.HasAbout {
-		return false
-	}
-	return m.About != aboutSkipped
 }

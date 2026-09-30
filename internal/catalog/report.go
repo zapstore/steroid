@@ -17,17 +17,32 @@ type appReport struct {
 	ok       []string
 	fails    []string
 	debugDir string
+	live     bool
 }
 
 func (r *appReport) mark(stage string) {
 	r.ok = append(r.ok, stage)
 }
 
+// step prints one line while the stage is running. It is a no-op unless --debug is set.
+func (r *appReport) step(msg string) {
+	if r == nil || !r.live {
+		return
+	}
+	msg = oneLine(msg)
+	if msg == "" {
+		return
+	}
+	writeBlock(r.id + " " + msg)
+}
+
 func (r *appReport) fail(stage string, err error) {
 	if err == nil {
 		return
 	}
-	r.fails = append(r.fails, stage+": "+oneLine(err.Error()))
+	msg := stage + ": " + oneLine(err.Error())
+	r.fails = append(r.fails, msg)
+	r.step("fail " + msg)
 }
 
 func (r *appReport) failedStage(stage string) bool {

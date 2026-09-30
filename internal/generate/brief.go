@@ -13,9 +13,7 @@ type Facts struct {
 	NoAds            string `json:"no_ads"`
 	NoTracking       string `json:"no_tracking"`
 	OfflineCapable   string `json:"offline_capable"`
-	Accountless      string `json:"accountless"`
 	E2EE             string `json:"e2ee"`
-	Decentralized    string `json:"decentralized"`
 	OpenSource       string `json:"open_source"`
 }
 
@@ -32,9 +30,7 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 	put("no_ads", f.NoAds)
 	put("no_tracking", f.NoTracking)
 	put("offline_capable", f.OfflineCapable)
-	put("accountless", f.Accountless)
 	put("e2ee", f.E2EE)
-	put("decentralized", f.Decentralized)
 	put("open_source", f.OpenSource)
 	return json.Marshal(out)
 }
@@ -45,9 +41,7 @@ func (f Facts) Normalize() Facts {
 	f.NoAds = truth(f.NoAds)
 	f.NoTracking = truth(f.NoTracking)
 	f.OfflineCapable = truth(f.OfflineCapable)
-	f.Accountless = truth(f.Accountless)
 	f.E2EE = truth(f.E2EE)
-	f.Decentralized = truth(f.Decentralized)
 	f.OpenSource = truth(f.OpenSource)
 	return f
 }

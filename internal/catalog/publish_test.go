@@ -153,12 +153,12 @@ func apkListing(id, hash string) Listing {
 	}
 	return Listing{
 		AppID:   id,
-		App:     nostr.Event{ID: id + "-app", Kind: events.KindApp},
-		Release: nostr.Event{ID: id + "-rel", Kind: events.KindRelease},
+		App:     nostr.Event{ID: id + "-app", Kind: events.KindApp, Tags: nostr.Tags{{"d", id}}},
+		Release: nostr.Event{ID: id + "-rel", Kind: events.KindRelease, Tags: nostr.Tags{{"i", id}}},
 		Assets: []nostr.Event{{
 			ID:   id + "-asset",
 			Kind: events.KindAsset,
-			Tags: tags,
+			Tags: append(nostr.Tags{{"i", id}}, tags...),
 		}},
 	}
 }

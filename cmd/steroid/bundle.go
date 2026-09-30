@@ -17,7 +17,7 @@ func bundle(args []string) int {
 	fs := flag.NewFlagSet("bundle", flag.ExitOnError)
 	filter := fs.String("filter", "", "substring of the app ID; only those apps are enriched and included in the diff")
 	noEnrich := fs.Bool("no-enrich", false, "publish without enriching; ship artifact files only when the cache apk matches the listing")
-	debug := fs.Bool("debug", false, "write prompt and response under data/debug/<app-id>")
+	debug := fs.Bool("debug", false, "log each step, and write prompt and response under data/debug/<app-id>")
 	fs.Usage = func() {
 		usage()
 		fs.PrintDefaults()

@@ -10,18 +10,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const (
-	DefaultModel = "z-ai/glm-5.3-flash"
-)
-
-// DefaultFallbacks are tried after DefaultModel when EMBED_MODEL is unset.
-var DefaultFallbacks = []string{
-	"google/gemini-2.5-flash-lite",
-	"qwen/qwen3.7-flash",
-	"mistralai/mistral-nemo",
-	"gpt-5.4-nano",
-}
-
 // Config is the remote LLM the overview call uses.
 type Config struct {
 	ProviderURL string
@@ -85,13 +73,10 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// Validate fills defaults and rejects a call that has no provider.
+// Validate rejects a call that has no provider or no model.
 func (c *Config) Validate() error {
 	if c.Model == "" {
-		c.Model = DefaultModel
-		if len(c.Fallbacks) == 0 {
-			c.Fallbacks = append([]string(nil), DefaultFallbacks...)
-		}
+		return fmt.Errorf("set EMBED_MODEL")
 	}
 	if c.ProviderURL == "" || c.APIKey == "" {
 		return fmt.Errorf("set EMBED_PROVIDER_URL and EMBED_API_KEY")

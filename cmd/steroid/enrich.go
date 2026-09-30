@@ -16,7 +16,7 @@ import (
 func enrich(args []string) int {
 	fs := flag.NewFlagSet("enrich", flag.ExitOnError)
 	filter := fs.String("filter", "", "substring of the app ID")
-	debug := fs.Bool("debug", false, "write prompt and response under data/debug/<app-id>")
+	debug := fs.Bool("debug", false, "log each step, and write prompt and response under data/debug/<app-id>")
 	force := fs.Bool("force", false, "delete each matching app directory before enriching")
 	fs.Usage = func() {
 		usage()

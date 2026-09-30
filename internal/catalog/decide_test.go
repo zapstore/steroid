@@ -3,46 +3,46 @@ package catalog
 import "testing"
 
 func TestPlanFactChangeKeepsAbout(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "old", Commit: "abc", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
+	m := memo{Version: enrichVersion, APK: "old", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
 	o := observed{
 		APK: "new", Feature: "feat", Facts: "fcm:no", Commit: "abc", Repo: true,
 		HasAbout: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
-	if !got.Download || !got.Scan || !got.Security || got.About || got.Vector || got.Clone {
+	if !got.Download || !got.Scan || !got.Security || !got.Clone || got.About || got.Vector {
 		t.Fatalf("%+v", got)
 	}
 }
 
-func TestPlanCommitChangeRewritesAboutAndSecurity(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "apk", Commit: "old", Feature: "feat", Facts: "fcm:yes", About: "about"}
+func TestPlanResolvedCommitDoesNotRedo(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
 	o := observed{
-		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "new", Repo: true,
-		HasAbout: true, HasIcon: true, HasVector: true, HasFacts: true,
+		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "abc", Repo: true,
+		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
-	if !got.Clone || !got.About || !got.Security || got.Vector || !got.Download || !got.Scan {
+	if got.Clone || got.About || got.Security || got.Vector || got.Download || got.Scan {
 		t.Fatalf("%+v", got)
 	}
 }
 
 func TestPlanFeatureChangeRewritesVector(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "apk", Commit: "abc", Feature: "old", Facts: "fcm:yes", About: "about"}
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "old", Facts: "fcm:yes", About: "about"}
 	o := observed{
 		APK: "apk", Feature: "new", Facts: "fcm:yes", Commit: "abc", Repo: true,
-		HasAbout: true, HasIcon: true, HasVector: true, HasFacts: true,
+		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
-	if !got.About || !got.Vector || got.Security || got.Clone {
+	if !got.About || !got.Vector || !got.Clone || got.Security {
 		t.Fatalf("%+v", got)
 	}
 }
 
 func TestPlanMissingIconDoesNotCallModel(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "apk", Commit: "abc", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
 	o := observed{
 		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "abc", Repo: true,
-		HasAbout: true, HasVector: true, HasFacts: true,
+		HasAbout: true, HasSecurity: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
 	if !got.Download || got.Scan || got.About || got.Security || got.Vector || got.Clone {
@@ -59,7 +59,7 @@ func TestPlanNoAboutStillAnalyzes(t *testing.T) {
 }
 
 func TestPlanOldVersionRedoesWork(t *testing.T) {
-	m := memo{Version: enrichVersion - 1, APK: "apk", Commit: "abc", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
+	m := memo{Version: enrichVersion - 1, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
 	o := observed{
 		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "abc", Repo: true,
 		HasAbout: true, HasIcon: true, HasVector: true, HasFacts: true,
@@ -70,26 +70,26 @@ func TestPlanOldVersionRedoesWork(t *testing.T) {
 	}
 }
 
-func TestPlanSkippedAboutStaysMissing(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "apk", Commit: "abc", Feature: "feat", Facts: "fcm:yes", About: aboutSkipped, Icon: "apk"}
+func TestPlanSkippedAboutIsRedone(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: aboutSkipped, Icon: "apk"}
 	o := observed{
 		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "abc", Repo: true,
-		HasIcon: true, HasVector: true, HasFacts: true,
+		HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
-	if got.About || got.Security || got.Clone || got.Download || got.Scan || got.Vector {
+	if !got.About || !got.Clone || got.Security || got.Download || got.Scan || got.Vector {
 		t.Fatalf("%+v", got)
 	}
 }
 
 func TestPlanLostAboutFileRedoes(t *testing.T) {
-	m := memo{Version: enrichVersion, APK: "apk", Commit: "abc", Feature: "feat", Facts: "fcm:yes", About: "abc123", Icon: "apk"}
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "abc123", Icon: "apk"}
 	o := observed{
 		APK: "apk", Feature: "feat", Facts: "fcm:yes", Commit: "abc", Repo: true,
-		HasIcon: true, HasVector: true, HasFacts: true,
+		HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
 	got := plan(m, o)
-	if !got.About || got.Security || got.Clone || got.Scan || got.Vector {
+	if !got.About || !got.Clone || got.Security || got.Scan || got.Vector {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -103,10 +103,10 @@ func TestBlankNoChange(t *testing.T) {
 	}
 }
 
-func TestPlanSourceAbsentSkipsSecurity(t *testing.T) {
+func TestPlanMissingSecurityRunsWithoutACommit(t *testing.T) {
 	o := observed{APK: "apk", Feature: "feat", Repo: true, HasIcon: true}
 	got := plan(memo{}, o)
-	if got.Security || got.Clone || !got.About || !got.Scan {
+	if !got.Security || got.Clone || !got.About || !got.Scan {
 		t.Fatalf("%+v", got)
 	}
 }

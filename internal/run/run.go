@@ -57,27 +57,22 @@ func site(in Input) string {
 
 // Overview calls the LLM. summary is the about text.
 // note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version string, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
+func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", nil, "", err
 	}
-	if tree != nil && pkg != "" {
-		if ok, _ := source.Compare(tree, pkg, version); !ok {
-			tree = nil
-		}
+	src := ""
+	if tree != nil {
+		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), project).Text
 	}
 	var reviewErr error
 	if tree != nil {
 		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, project)
 		if err == nil {
-			about, security, facts, err := finish(gen, rows)
+			about, security, facts, err := finish(gen, rows, app, src, true)
 			return about, security, facts, llmNote("review", gen.ProviderModel), err
 		}
 		reviewErr = err
-	}
-	src := ""
-	if tree != nil {
-		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), project).Text
 	}
 	gen, err := generate.Run(ctx, cfg, client, generate.Input{
 		App:       app,
@@ -97,7 +92,7 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	if reviewErr != nil {
 		note += " (review failed: " + strings.Join(strings.Fields(reviewErr.Error()), " ") + ")"
 	}
-	about, security, facts, err := finish(gen, rows)
+	about, security, facts, err := finish(gen, rows, app, src, tree != nil)
 	return about, security, facts, note, err
 }
 
@@ -109,11 +104,87 @@ func llmNote(path, model string) string {
 	return path + " " + model
 }
 
-func finish(gen generate.Result, rows []scan.Row) (string, string, []byte, error) {
-	rows = claims(rows, generate.Lock(gen.Facts, rows))
+func finish(gen generate.Result, rows []scan.Row, app generate.App, extra string, read bool) (string, string, []byte, error) {
+	facts := generate.Lock(gen.Facts, rows)
+	rows = withoutFact(rows, "decentralized")
+	rows = withoutFact(rows, "accountless")
+	rows = claims(rows, facts)
 	rows = justify(rows, gen.Reason)
+	rows = ClosedFacts(rows, app, extra, read)
 	security := strings.TrimSpace(gen.Security)
 	return gen.About, security, scan.CSV(rows), nil
+}
+
+// ClosedFacts adds the yes/no rows every facts file must contain.
+// offline_capable is no when the scan did not find a phone with no INTERNET permission.
+// open_source is yes only when this run read source and the listing license is free.
+// A repository that was not read is unknown, so that row is left out.
+func ClosedFacts(rows []scan.Row, app generate.App, source string, read bool) []scan.Row {
+	if !hasFact(rows, "offline_capable") {
+		rows = append(rows, scan.Row{Fact: "offline_capable", Value: "no", Basis: "apk"})
+	}
+	if strings.TrimSpace(app.Repository) != "" && !read && strings.TrimSpace(source) == "" {
+		return withoutFact(rows, "open_source")
+	}
+	if !hasFact(rows, "open_source") {
+		value := "no"
+		var reason string
+		if strings.TrimSpace(source) != "" {
+			if code, ok := freeLicense(app.License); ok {
+				value = "yes"
+				reason = code
+			}
+		}
+		rows = append(rows, scan.Row{Fact: "open_source", Value: value, Basis: "listing", Reason: reason})
+	}
+	return rows
+}
+
+func hasFact(rows []scan.Row, fact string) bool {
+	for _, row := range rows {
+		if row.Fact == fact {
+			return true
+		}
+	}
+	return false
+}
+
+func freeLicense(license string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(license)) {
+	case "MIT":
+		return "MIT", true
+	case "BSD":
+		return "BSD", true
+	case "ISC":
+		return "ISC", true
+	case "APACHE-2.0":
+		return "Apache-2.0", true
+	case "MPL":
+		return "MPL", true
+	case "LGPL":
+		return "LGPL", true
+	case "GPL":
+		return "GPL", true
+	case "AGPL":
+		return "AGPL", true
+	case "UNLICENSE":
+		return "Unlicense", true
+	case "0BSD":
+		return "0BSD", true
+	default:
+		return "", false
+	}
+}
+
+func withoutFact(rows []scan.Row, fact string) []scan.Row {
+	out := make([]scan.Row, 0, len(rows))
+	for _, row := range rows {
+		if row.Fact == fact {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func cleanReason(text string) string {
@@ -159,9 +230,7 @@ func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 		}
 		rows = append(rows, scan.Row{Fact: fact, Value: value, Basis: "listing"})
 	}
-	add("accountless", facts.Accountless)
 	add("e2ee", facts.E2EE)
-	add("decentralized", facts.Decentralized)
 	add("offline_capable", facts.OfflineCapable)
 	add("open_source", facts.OpenSource)
 	if facts.NoAds == "no" {

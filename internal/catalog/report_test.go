@@ -1,9 +1,39 @@
 package catalog
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestDebugStepPrints(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	rep := &appReport{id: "com.example", live: true}
+	rep.step("scan")
+	rep.step("  ")
+	(&appReport{id: "com.example"}).step("scan")
+	rep.fail("apk", errString("timeout"))
+	_ = w.Close()
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "com.example scan\ncom.example fail apk: timeout\n" {
+		t.Fatalf("%q", raw)
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
 
 func TestAppReportShowsPlanOutcome(t *testing.T) {
 	rep := appReport{

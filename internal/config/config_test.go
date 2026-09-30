@@ -37,11 +37,8 @@ func TestLoadDotEnvDoesNotOverride(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	c := Config{ProviderURL: "https://api.ppq.ai/v1", APIKey: "k"}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if c.Model != DefaultModel || len(c.Fallbacks) != len(DefaultFallbacks) {
-		t.Fatalf("model %q fallbacks %v", c.Model, c.Fallbacks)
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected model error")
 	}
 	c = Config{ProviderURL: "https://api.ppq.ai/v1", APIKey: "k", Model: "other", Fallbacks: []string{"nope"}}
 	if err := c.Validate(); err != nil {

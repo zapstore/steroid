@@ -145,7 +145,7 @@ func TestRunSummary(t *testing.T) {
 
 func TestRunSummaryFencedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n{\\\"about\\\":\\\"A foss store.\\\",\\\"security\\\":\\\"\\\"}\\n```\"}}]}"))
+		_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n{\\\"about\\\":\\\"A store.\\\",\\\"security\\\":\\\"Stays on the phone.\\\",\\\"facts\\\":\\\"no-change\\\"}\\n```\"}}]}"))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -157,7 +157,7 @@ func TestRunSummaryFencedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got.Summary, "A foss store.") {
+	if !strings.Contains(got.Summary, "A store.") {
 		t.Fatalf("got %q", got.Summary)
 	}
 }
@@ -213,7 +213,7 @@ func TestAssess(t *testing.T) {
 		if !strings.Contains(body, "\"request_install_packages\",\"yes\"") || !strings.Contains(body, "REQUEST_INSTALL_PACKAGES") {
 			t.Fatalf("scan csv %s", body)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore is an open Android app store for sideloading releases.\",\"security\":\"It can install other apps, which is expected for a store.\"}"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore is an open Android app store for sideloading releases.\",\"security\":\"It can install other apps, which is expected for a store.\",\"facts\":\"no-change\"}"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	got, err := Assess(t.Context(), config.Config{
@@ -248,7 +248,7 @@ func TestAssessIncludesWebsite(t *testing.T) {
 		if len(req.Tools) != 0 {
 			t.Fatalf("tools %+v", req.Tools)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore publishes Android apps.\",\"security\":\"It can install packages.\"}"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore publishes Android apps.\",\"security\":\"It can install packages.\",\"facts\":\"no-change\"}"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	app := sampleInput().App
@@ -265,7 +265,7 @@ func TestAssessIncludesWebsite(t *testing.T) {
 
 func TestAssessEmptySheetStillWrites(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A calculator.\",\"security\":\"Uses the network.\"}"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A calculator.\",\"security\":\"Uses the network.\",\"facts\":\"no-change\"}"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	got, err := Assess(t.Context(), config.Config{
@@ -275,6 +275,22 @@ func TestAssessEmptySheetStillWrites(t *testing.T) {
 	}, srv.Client(), sampleInput().App, nil, "", "", "", "")
 	if err != nil || !strings.Contains(got.Summary, "calculator") {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestReplyRejectsOtherBuild(t *testing.T) {
+	cases := []string{
+		"This build uses Google Play services and Firebase Cloud Messaging, which can send device data off the phone. While the app is open source and decentralized on Nostr, the standard variant relies on centralized push infrastructure.",
+		"The FCM push component in standard builds links Firebase, which can send data off the phone. The FOSS variant avoids this by using UnifiedPush.",
+	}
+	for _, security := range cases {
+		if _, err := Reply("Sends mail.", security, "", "", nil); err == nil {
+			t.Fatalf("accepted %q", security)
+		}
+	}
+	notes, err := Reply("Sends mail.", "Firebase can send data off the phone.", "no-change", "", nil)
+	if err != nil || notes.Security != "Firebase can send data off the phone." {
+		t.Fatalf("%+v %v", notes, err)
 	}
 }
 
@@ -296,9 +312,14 @@ func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
 	if err != nil || notes.Reason["microphone"] != "the record button records audio" {
 		t.Fatalf("%+v %v", notes, err)
 	}
-	empty, err := Reply("", "Stays on the phone.", "no-change", prev, nil)
-	if err != nil || empty.About != "" || empty.Security != "Stays on the phone." {
-		t.Fatalf("%+v %v", empty, err)
+	if _, err := Reply("", "Stays on the phone.", "no-change", prev, nil); err == nil {
+		t.Fatal("empty about")
+	}
+	if _, err := Reply("A wallet.", "", "no-change", prev, nil); err == nil {
+		t.Fatal("empty security")
+	}
+	if _, err := Reply("A wallet.", "Stays on the phone.", "", prev, nil); err == nil {
+		t.Fatal("empty facts")
 	}
 }
 

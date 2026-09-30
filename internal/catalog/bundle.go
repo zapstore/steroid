@@ -1,18 +1,19 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/zapstore/relay/pkg/events"
 	"github.com/zapstore/steroid/internal/picture"
@@ -28,10 +29,11 @@ var avatarMu sync.Mutex
 // Bundle reads the relay database and publishes the next snapshot.
 // It enriches changed listings unless skipEnrich is set.
 // filter is a substring of the app ID. An empty filter selects every changed listing.
-// A non-empty filter enriches those listings only, fetches only their authors' avatars, and writes a diff of only those apps.
+// A non-empty filter enriches those listings only and writes a diff of only those apps.
 // The snapshot still contains the full catalog.
 // With skipEnrich, profile avatars are left as they are, and artifact files are included only when the app cache apk matches the listing asset hash.
 func Bundle(ctx context.Context, data, dbPath, modelDir string, signer Signer, filter string, skipEnrich, debug bool) (int64, error) {
+	writeBlock("load relay")
 	raw, err := LoadEvents(ctx, dbPath, signer.PubKey)
 	if err != nil {
 		return 0, err
@@ -82,9 +84,6 @@ func Bundle(ctx context.Context, data, dbPath, modelDir string, signer Signer, f
 		if err := enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug); err != nil {
 			return 0, err
 		}
-		if err := ensureAvatars(ctx, data, profilesFor(next, filter)); err != nil {
-			return 0, err
-		}
 	}
 	return Publish(ctx, data, next, signer, time.Now().Unix(), filter, skipEnrich)
 }
@@ -116,11 +115,7 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 		}
 	}
 	writeBlock(enrichLine(len(work), len(next.Listings), filter, force))
-	err = enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug)
-	if err != nil {
-		return err
-	}
-	return ensureAvatars(ctx, data, profilesFor(State{Listings: work, Profiles: next.Profiles}, filter))
+	return enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug)
 }
 
 func runLine(listings int, enriching, filter string, from int64) string {
@@ -241,45 +236,6 @@ func picturesByPubkey(profiles []Profile) map[string]string {
 	return out
 }
 
-func ensureAvatars(ctx context.Context, data string, profiles []Profile) error {
-	var ok int
-	var fails []string
-	note := func(profile Profile, err error) {
-		fails = append(fails, profile.Pubkey+": "+oneLine(err.Error()))
-	}
-	for _, profile := range profiles {
-		if profile.Picture == "" {
-			continue
-		}
-		wrote, err := storeAvatar(ctx, data, profile.Pubkey, profile.Picture)
-		if err != nil {
-			note(profile, err)
-			continue
-		}
-		if wrote {
-			ok++
-		}
-	}
-	writeAvatarBlock(ok, fails)
-	return nil
-}
-
-func writeAvatarBlock(ok int, fails []string) {
-	if ok == 0 && len(fails) == 0 {
-		return
-	}
-	var b strings.Builder
-	if len(fails) == 0 {
-		fmt.Fprintf(&b, "avatars %d ok\n", ok)
-	} else {
-		fmt.Fprintf(&b, "avatars %d ok, %d failed\n", ok, len(fails))
-		for _, fail := range fails {
-			fmt.Fprintf(&b, "  fail %s\n", fail)
-		}
-	}
-	writeBlock(b.String())
-}
-
 // storeAvatar writes <pubkey>.webp from a kind 0 picture URL.
 // wrote is false when the URL is empty or the current file already matches it.
 func storeAvatar(ctx context.Context, data, pubkey, pictureURL string) (bool, error) {
@@ -397,24 +353,26 @@ func apkOf(listing Listing) (url, hash string) {
 }
 
 // BuildBundle writes a client bundle for from→to. Artifact bytes are the latest files.
-// about, security, and facts are left out when a bundle that ended at from already carried the same bytes.
-// The client keeps the stored text for a missing member.
+// about, vector, and icon.webp ship only when the diff has that app's kind 32267 event.
+// security and facts ship only when the diff has that app's kind 3063 event.
+// The client keeps the stored file for a missing member.
 func BuildBundle(ctx context.Context, data string, from, to, bundledAt int64, diff Diff, signer Signer) ([]byte, error) {
 	raw, err := MarshalDiff(diff)
 	if err != nil {
 		return nil, err
 	}
-	prior := bundlesEndingAt(data, from)
 	var members []member
 	if len(raw) > 0 {
 		members = append(members, member{Name: "diff.jsonl", Data: raw})
 	}
-	for _, appID := range diff.Apps {
+	listing, asset := enrichmentApps(diff.Events)
+	ids := enrichmentIDs(listing, asset, diff.Apps)
+	for _, appID := range ids {
 		if appID == "" || strings.Contains(appID, "/") || strings.Contains(appID, "..") {
 			return nil, fmt.Errorf("app id %q", appID)
 		}
 		dir := AppDir(data, appID)
-		for _, name := range []string{"about", "security", "facts", "vector", "icon.webp"} {
+		for _, name := range enrichmentFiles(appID, listing, asset) {
 			body, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -426,9 +384,6 @@ func BuildBundle(ctx context.Context, data string, from, to, bundledAt int64, di
 				continue
 			}
 			memberName := filepath.ToSlash(filepath.Join(appID, name))
-			if noteFile(name) && sameNote(prior, memberName, body) {
-				continue
-			}
 			members = append(members, member{Name: memberName, Data: body})
 		}
 	}
@@ -448,44 +403,59 @@ func BuildBundle(ctx context.Context, data string, from, to, bundledAt int64, di
 	return pack(ctx, members, from, to, bundledAt, &signer)
 }
 
-func noteFile(name string) bool {
-	switch name {
-	case "about", "security", "facts":
-		return true
-	default:
-		return false
+// enrichmentApps is the app ids whose kind 32267 or kind 3063 event is in the diff.
+func enrichmentApps(list []nostr.Event) (listing, asset map[string]struct{}) {
+	listing = map[string]struct{}{}
+	asset = map[string]struct{}{}
+	for _, event := range list {
+		switch event.Kind {
+		case events.KindApp:
+			if id, ok := events.Find(event.Tags, "d"); ok && id != "" {
+				listing[id] = struct{}{}
+			}
+		case events.KindAsset:
+			if id, ok := events.Find(event.Tags, "i"); ok && id != "" {
+				asset[id] = struct{}{}
+			}
+		}
 	}
+	return listing, asset
 }
 
-// sameNote reports that some bundle ending at the previous epoch already shipped these bytes.
-func sameNote(prior []map[string][]byte, name string, body []byte) bool {
-	for _, files := range prior {
-		if prev, ok := files[name]; ok && bytes.Equal(prev, body) {
-			return true
-		}
+func enrichmentIDs(listing, asset map[string]struct{}, allowed []string) []string {
+	okID := map[string]struct{}{}
+	for _, id := range allowed {
+		okID[id] = struct{}{}
 	}
-	return false
+	seen := map[string]struct{}{}
+	var ids []string
+	for id := range listing {
+		if _, ok := okID[id]; !ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for id := range asset {
+		if _, ok := okID[id]; !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
-func bundlesEndingAt(data string, epoch int64) []map[string][]byte {
-	if epoch <= 0 {
-		return nil
+func enrichmentFiles(appID string, listing, asset map[string]struct{}) []string {
+	var names []string
+	if _, ok := listing[appID]; ok {
+		names = append(names, "about", "vector", "icon.webp")
 	}
-	entries, err := os.ReadDir(BundleDir(data))
-	if err != nil {
-		return nil
+	if _, ok := asset[appID]; ok {
+		names = append(names, "security", "facts")
 	}
-	tail := fmt.Sprintf("-%d.tar.zst", epoch)
-	var out []map[string][]byte
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), tail) {
-			continue
-		}
-		files, err := unpack(filepath.Join(BundleDir(data), entry.Name()))
-		if err != nil {
-			continue
-		}
-		out = append(out, files)
-	}
-	return out
+	return names
 }

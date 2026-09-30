@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,9 +47,11 @@ func Publish(ctx context.Context, data string, next State, signer Signer, bundle
 		diff.Apps = appsMatchingAPK(data, next, diff.Apps)
 	}
 	if latest > 0 && len(diff.Events) == 0 && len(diff.AppDeletes) == 0 && len(diff.Coords) == 0 && len(diff.Apps) == 0 && len(diff.Avatars) == 0 {
+		writeBlock("unchanged")
 		return latest, nil
 	}
 	nextN := latest + 1
+	writeBlock(fmt.Sprintf("publish %d", nextN))
 	body, err := BuildBundle(ctx, data, latest, nextN, bundledAt, diff, signer)
 	if err != nil {
 		return 0, err

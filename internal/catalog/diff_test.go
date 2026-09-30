@@ -101,7 +101,10 @@ func TestBundleCopiesArtifactDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	diff := Diff{
-		Events:  []nostr.Event{{ID: "app-m", Kind: 32267, PubKey: signer.PubKey, CreatedAt: 1}},
+		Events: []nostr.Event{{
+			ID: "app-m", Kind: 32267, PubKey: signer.PubKey, CreatedAt: 1,
+			Tags: nostr.Tags{{"d", "com.example.maps"}},
+		}},
 		Apps:    []string{"com.example.maps"},
 		Avatars: []string{avatar},
 	}
@@ -145,7 +148,11 @@ func TestLargeBundleManifestFitsBunker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := BuildBundle(t.Context(), data, 0, 1, 10, Diff{Apps: ids}, signer)
+	events := make([]nostr.Event, apps)
+	for i, id := range ids {
+		events[i] = nostr.Event{ID: id, Kind: 32267, Tags: nostr.Tags{{"d", id}}}
+	}
+	body, err := BuildBundle(t.Context(), data, 0, 1, 10, Diff{Apps: ids, Events: events}, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,12 +165,12 @@ func TestLargeBundleManifestFitsBunker(t *testing.T) {
 		t.Fatalf("manifest tags: %s", manifest)
 	}
 	lines := bytes.Count(files["index"], []byte("\n"))
-	if lines != apps {
+	if lines != apps+1 {
 		t.Fatalf("index lines %d", lines)
 	}
 }
 
-func TestBundleOmitsUnchangedNotes(t *testing.T) {
+func TestBundleFilesFollowEventKind(t *testing.T) {
 	data := t.TempDir()
 	signer, err := ParseSigner("1")
 	if err != nil {
@@ -174,54 +181,56 @@ func TestBundleOmitsUnchangedNotes(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	about := []byte("Offline wallet.\n")
-	security := []byte("The cards stay on the phone.\n")
-	facts := []byte("\"fact\",\"value\",\"notes\"\n")
 	for name, body := range map[string][]byte{
-		"about": about, "security": security, "facts": facts, "vector": []byte("vec"),
+		"about": []byte("Offline wallet.\n"), "security": []byte("Stays on the phone.\n"),
+		"facts":  []byte("\"offline_capable\",\"yes\",\"No INTERNET\"\n"),
+		"vector": []byte("vec"), "icon.webp": []byte("ico"),
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	diff := Diff{Apps: []string{id}}
-	first, err := BuildBundle(t.Context(), data, 0, 1, 10, diff, signer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(BundleDir(data), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(BundlePath(data, 0, 1), first, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	second, err := BuildBundle(t.Context(), data, 1, 2, 20, diff, signer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := tarFiles(t, second)
-	for _, name := range []string{id + "/about", id + "/security", id + "/facts"} {
-		if _, ok := files[name]; ok {
-			t.Fatalf("unchanged %s was sent again", name)
+	listing := nostr.Event{ID: "app", Kind: 32267, Tags: nostr.Tags{{"d", id}}}
+	asset := nostr.Event{ID: "apk", Kind: 3063, Tags: nostr.Tags{{"i", id}}}
+	release := nostr.Event{ID: "rel", Kind: 30063, Tags: nostr.Tags{{"i", id}}}
+
+	onlyRelease := tarFiles(t, mustBundle(t, data, signer, Diff{Apps: []string{id}, Events: []nostr.Event{release}}))
+	for _, name := range []string{"about", "vector", "icon.webp", "security", "facts"} {
+		if _, ok := onlyRelease[id+"/"+name]; ok {
+			t.Fatalf("release shipped %s", name)
 		}
 	}
-	if _, ok := files[id+"/vector"]; !ok {
-		t.Fatal("vector should still be sent")
+	onlyApp := tarFiles(t, mustBundle(t, data, signer, Diff{Apps: []string{id}, Events: []nostr.Event{listing}}))
+	for _, name := range []string{"about", "vector", "icon.webp"} {
+		if _, ok := onlyApp[id+"/"+name]; !ok {
+			t.Fatalf("missing %s", name)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "about"), []byte("Offline wallet for loyalty cards.\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"security", "facts"} {
+		if _, ok := onlyApp[id+"/"+name]; ok {
+			t.Fatalf("app event shipped %s", name)
+		}
 	}
-	third, err := BuildBundle(t.Context(), data, 1, 2, 30, diff, signer)
+	onlyAsset := tarFiles(t, mustBundle(t, data, signer, Diff{Apps: []string{id}, Events: []nostr.Event{asset}}))
+	for _, name := range []string{"security", "facts"} {
+		if _, ok := onlyAsset[id+"/"+name]; !ok {
+			t.Fatalf("missing %s", name)
+		}
+	}
+	for _, name := range []string{"about", "vector", "icon.webp"} {
+		if _, ok := onlyAsset[id+"/"+name]; ok {
+			t.Fatalf("asset shipped %s", name)
+		}
+	}
+}
+
+func mustBundle(t *testing.T, data string, signer Signer, diff Diff) []byte {
+	t.Helper()
+	body, err := BuildBundle(t.Context(), data, 0, 1, 10, diff, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := tarFiles(t, third)
-	if string(changed[id+"/about"]) != "Offline wallet for loyalty cards.\n" {
-		t.Fatalf("changed about missing: %q", changed[id+"/about"])
-	}
-	if _, ok := changed[id+"/security"]; ok {
-		t.Fatal("unchanged security was sent with the new about")
-	}
+	return body
 }
 
 func tarFiles(t *testing.T, body []byte) map[string][]byte {

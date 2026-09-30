@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -214,6 +215,19 @@ func writeListing(b *strings.Builder, app App) {
 // Reply reads the model object. A no-change facts sheet keeps the previous CSV.
 func Reply(about, security, factsCSV, prevFacts string, sheet []scan.Row) (Notes, error) {
 	about = strings.TrimSpace(about)
+	security = strings.TrimSpace(security)
+	if about == "" {
+		return Notes{}, fmt.Errorf("empty about")
+	}
+	if security == "" {
+		return Notes{}, fmt.Errorf("empty security")
+	}
+	if err := thisAPK(about, security); err != nil {
+		return Notes{}, err
+	}
+	if strings.TrimSpace(factsCSV) == "" {
+		return Notes{}, fmt.Errorf("empty facts")
+	}
 	facts, reasons, noChange, err := ParseSheet(factsCSV)
 	if err != nil {
 		return Notes{}, err
@@ -226,11 +240,31 @@ func Reply(about, security, factsCSV, prevFacts string, sheet []scan.Row) (Notes
 	}
 	return Notes{
 		About:    about,
-		Security: strings.TrimSpace(security),
+		Security: security,
 		Facts:    Lock(facts, sheet),
 		Reason:   reasons,
 		Summary:  about,
 	}, nil
+}
+
+// thisAPK rejects about and security text that names another build.
+// The scan is one APK. "FOSS variant" and "standard build" are not that file.
+var otherBuild = regexp.MustCompile(`(?i)\b(?:foss|variant|flavou?r)\b|standard builds?|open source|f-droid|obtainium|play store`)
+
+func thisAPK(about, security string) error {
+	for _, field := range []struct{ name, text string }{
+		{"about", about},
+		{"security", security},
+	} {
+		text := strings.TrimSpace(field.text)
+		if text == "" || strings.EqualFold(text, "no-change") {
+			continue
+		}
+		if hit := otherBuild.FindString(text); hit != "" {
+			return fmt.Errorf("%s describes another build: %q", field.name, hit)
+		}
+	}
+	return nil
 }
 
 // ParseSheet reads a facts CSV. The bool is true when the text is the no-change sentinel.
@@ -277,12 +311,8 @@ func setFact(f *Facts, fact, value string) {
 		f.NoTracking = value
 	case "offline_capable":
 		f.OfflineCapable = value
-	case "accountless":
-		f.Accountless = value
 	case "e2ee":
 		f.E2EE = value
-	case "decentralized":
-		f.Decentralized = value
 	case "open_source":
 		f.OpenSource = value
 	}

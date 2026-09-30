@@ -37,7 +37,7 @@ const (
 // A failed stage is recorded in the app report. Stages that already succeeded are left in place.
 // The bool is true when any stage failed.
 func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorPicture string, cfg config.Config, client *http.Client, debugOn bool) (bool, error) {
-	rep := &appReport{id: listing.AppID}
+	rep := &appReport{id: listing.AppID, live: debugOn}
 	defer rep.flush()
 	if debugOn {
 		if dir, err := debug.AppDir(data, listing.AppID); err == nil {
@@ -63,7 +63,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		m = memo{}
 	}
 	hasAbout := fileNonEmpty(dir, fileAbout)
-	hasFacts := fileNonEmpty(dir, fileFacts)
+	hasFacts := factsReady(dir)
 	hasIcon := fileNonEmpty(dir, "icon.webp")
 	hasVector := fileNonEmpty(dir, "vector")
 	repo := strings.TrimSpace(in.Repository)
@@ -71,29 +71,44 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 
 	var rev source.Revision
 	if repo != "" {
+		rep.step("repository " + repo)
 		resolved, err := source.Resolve(ctx, repo, in.Version)
 		if err != nil {
 			rep.fail("repository", err)
 		} else {
 			rev = resolved
+			rep.step("repository " + shortHash(rev.Commit))
 		}
 	}
 	early := plan(m, observed{
 		APK: in.APKHash, Feature: m.Feature, Facts: m.Facts, Commit: rev.Commit,
 		Repo: repo != "", NeedReadme: needReadme,
-		HasAbout: hasAbout, HasIcon: hasIcon, HasVector: hasVector, HasFacts: hasFacts,
+		HasAbout: hasAbout, HasSecurity: fileNonEmpty(dir, fileSecurity), HasIcon: hasIcon, HasVector: hasVector, HasFacts: hasFacts,
 	})
 
 	var tree *source.Tree
-	if early.Clone {
+	defer func() {
+		if tree != nil {
+			_ = tree.Close()
+		}
+	}()
+	earlyWords := planWords(early)
+	rep.step("plan " + joinOr(earlyWords, "none"))
+	checkout := func() {
+		if tree != nil || rev.Commit == "" {
+			return
+		}
+		rep.step("clone " + shortHash(rev.Commit))
 		cloned, err := source.Checkout(ctx, rev)
 		if err != nil {
 			rep.fail("clone", err)
-		} else {
-			tree = cloned
-			defer tree.Close()
-			rep.mark("clone")
+			return
 		}
+		tree = cloned
+		rep.mark("clone")
+	}
+	if early.Clone {
+		checkout()
 	}
 	readme := ""
 	if needReadme {
@@ -111,12 +126,18 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 	var project string
 	iconFrom := m.Icon
 	if early.Download {
+		if sameFileHash(filepath.Join(dir, fileAPK), in.APKHash) {
+			rep.step("apk cached")
+		} else {
+			rep.step("apk fetch")
+		}
 		file, err := openAPK(ctx, dir, in)
 		if err != nil {
 			rep.fail("apk", err)
 		} else {
 			rep.mark("apk")
 			defer file.Close()
+			rep.step("scan")
 			scanned, dump, err := run.Scan(file)
 			if err != nil {
 				if early.Scan {
@@ -130,6 +151,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 					rep.mark("scan")
 				}
 			}
+			rep.step("icon apk")
 			webp, err := iconFromAPK(file.Path)
 			if err != nil {
 				rep.fail("icon", err)
@@ -144,6 +166,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 	}
 	if !hasIcon && strings.TrimSpace(in.IconURL) != "" {
+		rep.step("icon " + strings.TrimSpace(in.IconURL))
 		raw, err := picture.Fetch(ctx, in.IconURL)
 		if err != nil {
 			rep.fail("icon", err)
@@ -157,6 +180,9 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 			iconFrom = in.IconURL
 		}
 	}
+	if strings.TrimSpace(authorPicture) != "" {
+		rep.step("avatar")
+	}
 	if _, err := storeAvatar(ctx, data, listing.App.PubKey, authorPicture); err != nil {
 		rep.fail("avatar", err)
 	} else if strings.TrimSpace(authorPicture) != "" {
@@ -167,19 +193,19 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 	if len(rows) > 0 {
 		factsHash = hashText(doc.Facts(rows))
 	}
-	commit := m.Commit
-	if tree != nil && tree.Commit != "" {
-		commit = tree.Commit
-	} else if rev.Commit != "" && !early.Clone {
-		commit = rev.Commit
-	}
 	w := plan(m, observed{
-		APK: in.APKHash, Feature: featureHash, Facts: factsHash, Commit: commit,
+		APK: in.APKHash, Feature: featureHash, Facts: factsHash, Commit: rev.Commit,
 		Repo: repo != "", NeedReadme: needReadme,
-		HasAbout: hasAbout, HasIcon: hasIcon, HasVector: hasVector, HasFacts: hasFacts,
+		HasAbout: hasAbout, HasSecurity: fileNonEmpty(dir, fileSecurity), HasIcon: hasIcon, HasVector: hasVector, HasFacts: hasFacts,
 	})
+	if (w.About || w.Security) && repo != "" && tree == nil && !rep.failedStage("repository") && !rep.failedStage("clone") {
+		checkout()
+	}
 	shown := orWork(early, w)
 	rep.plan = planWords(shown)
+	if later := strings.Join(planWords(w), " "); later != strings.Join(earlyWords, " ") {
+		rep.step("plan " + joinOr(planWords(w), "none"))
+	}
 
 	prevAbout := readText(dir, fileAbout)
 	prevSecurity := readText(dir, fileSecurity)
@@ -187,21 +213,23 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 	security := prevSecurity
 	var factBytes []byte
 	var reason map[string]string
-	if w.About || (w.Security && tree != nil) {
+	if w.About || w.Security {
+		rep.step("overview")
 		if project == "" {
 			if file, err := openAPK(ctx, dir, in); err == nil {
+				rep.step("scan")
 				_, project, _ = run.Scan(file)
 				file.Close()
 			}
 		}
 		var summary, sec string
 		var err error
-		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
+		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
 		if err != nil {
 			if w.About {
 				rep.fail("about", err)
 			}
-			if w.Security && tree != nil {
+			if w.Security {
 				rep.fail("security", err)
 			}
 		} else {
@@ -209,13 +237,22 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 			if w.About && blankNoChange(summary, prevAbout) {
 				rep.fail("about", errors.New("about no-change with empty current text"))
 			}
-			if w.Security && tree != nil {
+			if w.Security {
 				security = keptText(sec, prevSecurity, true)
+				if blankNoChange(sec, prevSecurity) {
+					rep.fail("security", errors.New("security no-change with empty current text"))
+				}
 				if !noChange(sec) {
 					reason = reasonColumn(factBytes)
 				}
 			}
 		}
+	}
+	if w.About && strings.TrimSpace(about) == "" && !rep.failedStage("about") {
+		rep.fail("about", errors.New("empty"))
+	}
+	if w.Security && strings.TrimSpace(security) == "" && !rep.failedStage("security") {
+		rep.fail("security", errors.New("empty"))
 	}
 	if w.About && !rep.failedStage("about") {
 		if about != prevAbout {
@@ -226,7 +263,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 		rep.mark("about")
 	}
-	if w.Security && tree != nil && !rep.failedStage("security") {
+	if w.Security && !rep.failedStage("security") {
 		if security != prevSecurity {
 			if err := writeText(dir, fileSecurity, security); err != nil {
 				rep.fail("security", err)
@@ -235,13 +272,22 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 		rep.mark("security")
 	}
-	if len(rows) > 0 && (factsHash != m.Facts || (w.Security && tree != nil)) {
+	if len(rows) > 0 && (factsHash != m.Facts || !hasFacts || w.Security) {
+		rep.step("facts")
 		// Overview already added listing facts the scan cannot see, such as e2ee.
 		sheet := factCSV(rows, reason)
 		if len(factBytes) > 0 {
 			sheet = string(factBytes)
+		} else {
+			src := ""
+			if tree != nil {
+				src = "source"
+			}
+			sheet = factCSV(run.ClosedFacts(rows, run.AppOf(in), src, tree != nil), reason)
 		}
-		if err := writeText(dir, fileFacts, sheet); err != nil {
+		if strings.TrimSpace(sheet) == "" {
+			rep.fail("facts", errors.New("empty"))
+		} else if err := writeText(dir, fileFacts, sheet); err != nil {
 			rep.fail("facts", err)
 			return true, err
 		}
@@ -251,6 +297,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		vectorText += "\n\n" + about
 	}
 	if rebuiltFeature && (hashText(feature) != m.Feature || hashText(about) != storedAboutHash(m.About) || !hasVector) {
+		rep.step("vector")
 		if err := writeVectorText(ctx, dir, modelDir, vectorText); err != nil {
 			rep.fail("vector", err)
 		} else {
@@ -267,9 +314,10 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 	}
 	next := memo{
 		Version: enrichVersion,
-		APK:     in.APKHash, Commit: commit, Feature: featureHash, Facts: factsHash,
+		APK:     in.APKHash, Feature: featureHash, Facts: factsHash,
 		Icon: iconFrom, About: aboutHash,
 	}
+	rep.step("cache")
 	if err := writeMemo(dir, next); err != nil {
 		rep.fail("cache", err)
 		return true, err
@@ -278,6 +326,14 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		_ = os.Remove(filepath.Join(dir, fileAPK))
 	}
 	return rep.failed(), nil
+}
+
+func shortHash(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 func featureText(in run.Input, readme string) string {
@@ -396,6 +452,21 @@ func hashText(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// factsReady is a facts file that already has the rows every app must keep.
+func factsReady(dir string) bool {
+	body, err := os.ReadFile(filepath.Join(dir, fileFacts))
+	if err != nil || strings.TrimSpace(string(body)) == "" {
+		return false
+	}
+	text := string(body)
+	for _, fact := range []string{"no_google_services", "offline_capable"} {
+		if !strings.Contains(text, `"`+fact+`"`) {
+			return false
+		}
+	}
+	return true
+}
+
 func fileNonEmpty(dir, name string) bool {
 	info, err := os.Stat(filepath.Join(dir, name))
 	return err == nil && info.Size() > 0
@@ -433,8 +504,6 @@ func readMemo(dir string) (memo, bool) {
 			m.Version, _ = strconv.Atoi(val)
 		case "apk":
 			m.APK = val
-		case "commit":
-			m.Commit = val
 		case "feature":
 			m.Feature = val
 		case "facts":
@@ -449,8 +518,8 @@ func readMemo(dir string) (memo, bool) {
 }
 
 func writeMemo(dir string, m memo) error {
-	body := fmt.Sprintf("version %d\napk %s\ncommit %s\nfeature %s\nfacts %s\nicon %s\nabout %s\n",
-		m.Version, m.APK, m.Commit, m.Feature, m.Facts, m.Icon, m.About)
+	body := fmt.Sprintf("version %d\napk %s\nfeature %s\nfacts %s\nicon %s\nabout %s\n",
+		m.Version, m.APK, m.Feature, m.Facts, m.Icon, m.About)
 	return os.WriteFile(filepath.Join(dir, fileCache), []byte(body), 0o644)
 }
 

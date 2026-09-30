@@ -29,7 +29,8 @@ func profilesFor(st State, filter string) []Profile {
 }
 
 // onlyMatching keeps diff entries for apps whose id contains filter.
-// Matching listings are included even when their events did not change, so their artifact files ship.
+// Matching listings are included even when their events did not change.
+// Artifact files still ship only for a kind 32267 or 3063 that is in the diff.
 // Profiles and avatars stay when they belong to an author of a matching listing.
 func onlyMatching(d Diff, next State, filter string) Diff {
 	authors := map[string]struct{}{}
