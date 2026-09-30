@@ -133,7 +133,10 @@ func cleanReason(text string) string {
 
 func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 	for i, row := range rows {
-		if row.Value != "yes" {
+		if row.Value != "yes" && row.Fact != "no_ads" && row.Fact != "no_tracking" && row.Fact != "no_google_services" {
+			continue
+		}
+		if row.Fact == "no_tracking" && row.Basis == "apk" && strings.TrimSpace(row.Evidence) == "" {
 			continue
 		}
 		text := cleanReason(strings.Join(strings.Fields(reason[row.Fact]), " "))
@@ -156,10 +159,17 @@ func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 		}
 		rows = append(rows, scan.Row{Fact: fact, Value: value, Basis: "listing"})
 	}
-	add("account_required", facts.AccountRequired)
+	add("accountless", facts.Accountless)
 	add("e2ee", facts.E2EE)
+	add("decentralized", facts.Decentralized)
 	add("offline_capable", facts.OfflineCapable)
 	add("open_source", facts.OpenSource)
+	if facts.NoAds == "no" {
+		add("no_ads", "no")
+	}
+	if facts.NoTracking == "no" {
+		add("no_tracking", "no")
+	}
 	return rows
 }
 

@@ -109,7 +109,7 @@ func TestRunSummary(t *testing.T) {
 		inner, err := json.Marshal(map[string]string{
 			"about":    "Zapstore is an open Android app store.",
 			"security": "It installs packages.",
-			"facts":    "\"fact\",\"value\",\"notes\"\n\"ads\",\"no\",\"\"\n",
+			"facts":    "\"fact\",\"value\",\"notes\"\n\"no_ads\",\"no\",\"AdMob\"\n",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +135,7 @@ func TestRunSummary(t *testing.T) {
 	if !strings.Contains(got.Summary, "Zapstore is an open Android app store.") || strings.Contains(got.Summary, "No ads") {
 		t.Fatalf("got %q", got.Summary)
 	}
-	if got.Facts.Ads != "no" {
+	if got.Facts.NoAds != "no" {
 		t.Fatalf("facts %+v", got.Facts)
 	}
 	if got.ProviderModel != "test-model" {

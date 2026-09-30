@@ -127,7 +127,7 @@ func TestSinkQuotesDeviceCallWithTheSend(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "Leak.java"), []byte(java), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "location"}}).Text
+	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "fine_location"}}).Text
 	uses := digestSection(got, "Uses:")
 	if !strings.Contains(uses, "src/track.kt") || !strings.Contains(uses, "getLastLocation()") || !strings.Contains(uses, "client.post") {
 		t.Fatalf("location quote\n%s", uses)
@@ -273,8 +273,8 @@ func TestUseQuotePrefersDenialOverMention(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "map.kt"), []byte(body.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "location", Hint: "ACCESS_FINE_LOCATION"}}).Text
-	if !strings.Contains(got, "Uses:\nlocation src/map.kt\n") || !strings.Contains(got, "requestPermissions") || !strings.Contains(got, "finish()") {
+	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "fine_location", Hint: "ACCESS_FINE_LOCATION"}}).Text
+	if !strings.Contains(got, "Uses:\nfine_location src/map.kt\n") || !strings.Contains(got, "requestPermissions") || !strings.Contains(got, "finish()") {
 		t.Fatalf("%s", got)
 	}
 	if strings.Contains(got, "note.kt") {

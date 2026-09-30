@@ -34,13 +34,13 @@ English. Translate when the inputs are not. `about` and `security` are about 250
 
 `no-change` means that field is still right, including after a new version or a reworded screen. Write new text only when the scan, the listing, or the source changes what the app is for, or whether to install. Prefer `no-change` so a cached field is reused, and do not leave one that is stale. Use `no-change` only when that Current field already has text. `no-change` is never a word inside `notes`.
 
-Do not invent features, hosts, or uses. Never call the app safe, private, or malware. Do not mention the scan. In `about` and `security`, do not write permission ids, "open source", FOSS, F-Droid, Obtainium, or the Play Store. Google Play services is allowed when the scan names it.
+Do not invent features, hosts, or uses. Never call the app safe, private, or malware. Do not mention the scan. In `about` and `security`, do not write permission ids, "open source", FOSS, F-Droid, Obtainium, the Play Store, or a build variant. Do not tell the person to pick a variant, such as "Use the FOSS variant for privacy." Google Play services is allowed when the scan names it.
 
 ## Contents
 
 ### About
 
-What the person can do, and the main reasons to install. Do not name the app. It can start like: "Offline wallet for loyalty cards." Do not mention permissions, access, or what happens to data. Drop build steps, install steps, changelogs, donations, and how the app is built. If the listing already says this in under about 1000 characters, use `""`. Use `no-change` only when Current about already has the paragraph.
+What the person can do, and the main reasons to install. Do not name the app. It can start like: "Offline wallet for loyalty cards." Do not mention permissions, access, or what happens to data. Do not name a build variant or tell the person to use one. Drop build steps, install steps, changelogs, donations, and how the app is built. If the listing already says this in under about 1000 characters, use `""`. Use `no-change` only when Current about already has the paragraph.
 
 ### Facts
 
@@ -88,7 +88,7 @@ Permission rows use the same CSV. Keep every row the scan included. Do not add o
 
 ### Security
 
-Write the fact rows first. `security` is only what those rows mean. Do not add a risk the rows do not support.
+Write the fact rows first. `security` is only what those rows mean. Do not add a risk the rows do not support. Do not write "open source", FOSS, F-Droid, Obtainium, the Play Store, or a build variant. Do not tell the person to pick a variant.
 
 One or two sentences. The facts are already shown. Do not repeat them. Say only the consequence. The rows below are examples, not every case.
 
@@ -100,4 +100,4 @@ One or two sentences. The facts are already shown. Do not repeat them. Say only 
 | a permission note shows the data leaves the phone | what leaves |
 | a permission note shows the data stays | that it stays on the phone |
 
-If sensitive data can leave the phone, start with that sentence and prefix it with ⚠️. Data staying on the phone is not a warning line.
+Do not use an emoji. An important notice goes first: what leaves the phone, or another consequence the person should see before the rest. Then a line that is only `---`, then the paragraph. Data staying on the phone is not a notice. Omit the notice and the `---` when there is nothing to put first.

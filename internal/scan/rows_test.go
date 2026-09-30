@@ -26,16 +26,23 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 	got := map[string]Row{}
 	for _, row := range rows {
 		got[row.Fact+" "+row.Evidence] = row
+		switch row.Fact {
+		case "no_google_services", "no_ads", "no_tracking":
+			if row.Value != "no" || row.Basis != "apk" || row.Source != "abc" {
+				t.Fatalf("%+v", row)
+			}
+			continue
+		}
 		if row.Value != "yes" || row.Basis != "apk" || row.Source != "abc" {
 			t.Fatalf("%+v", row)
 		}
 	}
 	for _, key := range []string{
-		"tracking Firebase Analytics",
-		"ads AdMob",
-		"sms READ_SMS",
+		"no_tracking Firebase Analytics",
+		"no_ads AdMob",
+		"read_sms READ_SMS",
 		"query_all_packages QUERY_ALL_PACKAGES",
-		"offline_capable ",
+		"offline_capable No INTERNET",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("missing %s in %v", key, got)
@@ -46,11 +53,11 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 		if row.Fact == "gms" || row.Fact == "fcm" {
 			t.Fatal(row)
 		}
-		if row.Fact == "google_services" {
+		if row.Fact == "no_google_services" {
 			google = append(google, row)
 		}
 	}
-	if len(google) != 1 || google[0].Value != "yes" ||
+	if len(google) != 1 || google[0].Value != "no" ||
 		!strings.Contains(google[0].Evidence, "Google Play services: Play Services") ||
 		!strings.Contains(google[0].Evidence, "Firebase Cloud Messaging: Firebase") {
 		t.Fatalf("%+v", google)
@@ -67,11 +74,59 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 	if strings.Contains(prose, "READ_SMS") || strings.Contains(prose, "Flutter") {
 		t.Fatal(prose)
 	}
-	if !strings.Contains(prose, "Includes a tracker: Firebase Analytics") || !strings.Contains(prose, "No network permission") {
+	if !strings.Contains(prose, "Includes a tracker: Firebase Analytics") || !strings.Contains(prose, "No INTERNET") {
 		t.Fatal(prose)
 	}
 	if !strings.Contains(prose, "Google Play services: Play Services") || !strings.Contains(prose, "Firebase Cloud Messaging: Firebase") {
 		t.Fatal(prose)
+	}
+}
+
+func TestPlayServicesSetsNoTracking(t *testing.T) {
+	rows := FromReport(detect.Report{
+		Libraries: []detect.Library{{ID: "/com/google/android/gms", Name: "Play Services"}},
+	}, "abc")
+	got := map[string]string{}
+	notes := map[string]string{}
+	for _, row := range rows {
+		got[row.Fact] = row.Value
+		notes[row.Fact] = row.Evidence
+	}
+	if got["no_google_services"] != "no" || notes["no_google_services"] == "" {
+		t.Fatalf("%+v", rows)
+	}
+	if got["no_tracking"] != "no" || notes["no_tracking"] != "" {
+		t.Fatalf("tracking %+v", rows)
+	}
+	if _, ok := got["no_ads"]; ok {
+		t.Fatal(rows)
+	}
+}
+
+func TestBackgroundLocationJoinsFineAndCoarse(t *testing.T) {
+	rows := FromReport(detect.Report{
+		Manifest: true,
+		Permissions: []string{
+			"android.permission.ACCESS_FINE_LOCATION",
+			"android.permission.ACCESS_COARSE_LOCATION",
+			"android.permission.ACCESS_BACKGROUND_LOCATION",
+			"android.permission.INTERNET",
+		},
+	}, "abc")
+	got := map[string]string{}
+	for _, row := range rows {
+		got[row.Fact] = row.Evidence
+		if row.Fact == "location" || row.Fact == "sms" {
+			t.Fatal(row)
+		}
+	}
+	for _, fact := range []string{"fine_location", "coarse_location"} {
+		if !strings.Contains(got[fact], "ACCESS_BACKGROUND_LOCATION") {
+			t.Fatalf("%s %q", fact, got[fact])
+		}
+	}
+	if _, ok := got["offline_capable"]; ok {
+		t.Fatal(rows)
 	}
 }
 
@@ -84,7 +139,7 @@ func TestInternetPresentOmitsOffline(t *testing.T) {
 	for _, row := range rows {
 		got[row.Fact] = row.Value
 	}
-	if got["google_services"] != "no" || len(rows) != 1 {
+	if got["no_google_services"] != "yes" || len(rows) != 1 {
 		t.Fatalf("%+v", rows)
 	}
 	if CSV(nil) != nil {
@@ -100,7 +155,7 @@ func TestCSVColumns(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 	located := string(CSV([]Row{{
-		Fact: "location", Value: "yes", Basis: "apk", Evidence: "ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION", Reason: "sharing location in chats",
+		Fact: "fine_location", Value: "yes", Basis: "apk", Evidence: "ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION", Reason: "sharing location in chats",
 	}}))
 	if !strings.Contains(located, "\"ACCESS_BACKGROUND_LOCATION,ACCESS_FINE_LOCATION. sharing location in chats\"") {
 		t.Fatalf("%s", located)
@@ -113,12 +168,12 @@ func TestCSVColumns(t *testing.T) {
 		t.Fatalf("%s", installed)
 	}
 	repeated := string(CSV([]Row{
-		{Fact: "tracking", Value: "yes", Reason: "crash reports"},
-		{Fact: "tracking", Value: "yes", Evidence: "Firebase Analytics", Reason: "crash reports"},
-		{Fact: "tracking", Value: "yes", Evidence: "Sentry", Reason: "crash reports"},
-		{Fact: "tracking", Value: "yes", Reason: "crash reports"},
+		{Fact: "no_tracking", Value: "no", Reason: "crash reports"},
+		{Fact: "no_tracking", Value: "no", Evidence: "Firebase Analytics", Reason: "crash reports"},
+		{Fact: "no_tracking", Value: "no", Evidence: "Sentry", Reason: "crash reports"},
+		{Fact: "no_tracking", Value: "no", Reason: "crash reports"},
 	}))
-	if strings.Count(repeated, "tracking") != 1 {
+	if strings.Count(repeated, "\"no_tracking\"") != 1 {
 		t.Fatalf("%s", repeated)
 	}
 	if !strings.Contains(repeated, "Firebase Analytics") || !strings.Contains(repeated, "Sentry") {

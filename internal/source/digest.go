@@ -247,10 +247,15 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 	})
 	outbound = mergeOutbound(outbound, parsed)
 	for fact, q := range deviceQuotes(parsed) {
-		if !askedFact(uses, fact) {
-			continue
+		for _, name := range sheetFacts(fact) {
+			if !askedFact(uses, name) {
+				continue
+			}
+			if prev, ok := useQuotes[name]; ok && prev.score > q.score {
+				continue
+			}
+			useQuotes[name] = q
 		}
-		useQuotes[fact] = q
 	}
 	sort.Slice(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
@@ -430,6 +435,18 @@ func groupByPath(lines []hit) []outboundGroup {
 		groups[i].score = outboundScore(groups[i].lines)
 	}
 	return groups
+}
+
+// sheetFacts maps a device-call fact onto the rows the scan writes.
+func sheetFacts(fact string) []string {
+	switch fact {
+	case "location":
+		return []string{"coarse_location", "fine_location"}
+	case "sms":
+		return []string{"read_sms", "receive_sms", "send_sms"}
+	default:
+		return []string{fact}
+	}
 }
 
 func askedFact(uses []Use, fact string) bool {
@@ -723,8 +740,11 @@ func skipHost(host string) bool {
 
 var factUses = map[string][]string{
 	"contacts":                 {"contactscontract"},
-	"sms":                      {"smsmanager", "telephonymanager"},
-	"location":                 {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
+	"read_sms":                 {"smsmanager", "telephonymanager"},
+	"receive_sms":              {"smsmanager", "telephonymanager"},
+	"send_sms":                 {"smsmanager"},
+	"coarse_location":          {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
+	"fine_location":            {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
 	"camera":                   {"imagecapture", "camerax"},
 	"microphone":               {"mediarecorder", "audiorecord"},
 	"call_log":                 {"calllog"},
@@ -737,9 +757,9 @@ var factUses = map[string][]string{
 	"vpn_service":              {"vpnservice"},
 	"input_method":             {"inputmethodservice"},
 	"usage_stats":              {"usagestatsmanager"},
-	"tracking":                 {"crashlytics", "mixpanel", "sentry", "firebaseanalytics"},
-	"ads":                      {"admob", "adview", "interstitialad"},
-	"google_services":          {"firebasemessaging", "firebase.messaging", "firebase_messaging", "googleapiclient", "play-services"},
+	"no_tracking":              {"crashlytics", "mixpanel", "sentry", "firebaseanalytics"},
+	"no_ads":                   {"admob", "adview", "interstitialad"},
+	"no_google_services":       {"firebasemessaging", "firebase.messaging", "firebase_messaging", "googleapiclient", "play-services"},
 }
 
 // factActions are call sites. A mention of the permission name is a weaker quote.

@@ -9,13 +9,14 @@ import (
 
 // Facts is the closed checklist for Zapstore search. Values are yes, no, or unknown.
 type Facts struct {
-	GoogleServices  string `json:"google_services"`
-	Ads             string `json:"ads"`
-	Tracking        string `json:"tracking"`
-	OfflineCapable  string `json:"offline_capable"`
-	AccountRequired string `json:"account_required"`
-	E2EE            string `json:"e2ee"`
-	OpenSource      string `json:"open_source"`
+	NoGoogleServices string `json:"no_google_services"`
+	NoAds            string `json:"no_ads"`
+	NoTracking       string `json:"no_tracking"`
+	OfflineCapable   string `json:"offline_capable"`
+	Accountless      string `json:"accountless"`
+	E2EE             string `json:"e2ee"`
+	Decentralized    string `json:"decentralized"`
+	OpenSource       string `json:"open_source"`
 }
 
 // MarshalJSON writes yes and no only. Unknown is left out.
@@ -27,44 +28,57 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 			out[key] = value
 		}
 	}
-	put("google_services", f.GoogleServices)
-	put("ads", f.Ads)
-	put("tracking", f.Tracking)
+	put("no_google_services", f.NoGoogleServices)
+	put("no_ads", f.NoAds)
+	put("no_tracking", f.NoTracking)
 	put("offline_capable", f.OfflineCapable)
-	put("account_required", f.AccountRequired)
+	put("accountless", f.Accountless)
 	put("e2ee", f.E2EE)
+	put("decentralized", f.Decentralized)
 	put("open_source", f.OpenSource)
 	return json.Marshal(out)
 }
 
 // Normalize keeps only yes, no, and unknown.
 func (f Facts) Normalize() Facts {
-	f.GoogleServices = truth(f.GoogleServices)
-	f.Ads = truth(f.Ads)
-	f.Tracking = truth(f.Tracking)
+	f.NoGoogleServices = truth(f.NoGoogleServices)
+	f.NoAds = truth(f.NoAds)
+	f.NoTracking = truth(f.NoTracking)
 	f.OfflineCapable = truth(f.OfflineCapable)
-	f.AccountRequired = truth(f.AccountRequired)
+	f.Accountless = truth(f.Accountless)
 	f.E2EE = truth(f.E2EE)
+	f.Decentralized = truth(f.Decentralized)
 	f.OpenSource = truth(f.OpenSource)
 	return f
 }
 
 // Lock keeps a scanner detection. The model cannot talk those down to no or unknown.
+// no_google_services is copied from the scan: yes when those libraries are absent, no when they are present.
 // An APK with no INTERNET permission keeps offline_capable at yes.
 // The model may still say yes when the permission is present and the app works offline.
 func Lock(f Facts, rows []scan.Row) Facts {
 	f = f.Normalize()
 	for _, row := range rows {
-		if row.Basis != "apk" || row.Value != "yes" {
+		if row.Basis != "apk" {
+			continue
+		}
+		if row.Fact == "no_google_services" && (row.Value == "yes" || row.Value == "no") {
+			f.NoGoogleServices = row.Value
+			continue
+		}
+		if row.Value == "no" && (row.Fact == "no_ads" || row.Fact == "no_tracking") {
+			switch row.Fact {
+			case "no_ads":
+				f.NoAds = "no"
+			case "no_tracking":
+				f.NoTracking = "no"
+			}
+			continue
+		}
+		if row.Value != "yes" {
 			continue
 		}
 		switch row.Fact {
-		case "google_services":
-			f.GoogleServices = "yes"
-		case "ads":
-			f.Ads = "yes"
-		case "tracking":
-			f.Tracking = "yes"
 		case "offline_capable":
 			f.OfflineCapable = "yes"
 		}
@@ -72,7 +86,7 @@ func Lock(f Facts, rows []scan.Row) Facts {
 	return f
 }
 
-// SecurityText is the security file: the paragraph, then one warning line each.
+// SecurityText is the security file: notices, a --- line, then the paragraph.
 // A no-change paragraph is left as the sentinel so the stored file stays.
 func SecurityText(paragraph string, warnings []Warning) string {
 	paragraph = strings.TrimSpace(paragraph)
@@ -80,16 +94,16 @@ func SecurityText(paragraph string, warnings []Warning) string {
 		return paragraph
 	}
 	lines := WarningsText(warnings)
-	if paragraph == "" {
-		return lines
-	}
 	if lines == "" {
 		return paragraph
 	}
-	return paragraph + "\n" + lines
+	if paragraph == "" {
+		return lines
+	}
+	return lines + "\n---\n" + paragraph
 }
 
-// WarningsText is the warning list. Each line leads with a warning mark.
+// WarningsText is the notice list. One sentence per line, with no mark.
 func WarningsText(warnings []Warning) string {
 	var b strings.Builder
 	for _, w := range warnings {
@@ -99,9 +113,6 @@ func WarningsText(warnings []Warning) string {
 		}
 		if b.Len() > 0 {
 			b.WriteByte('\n')
-		}
-		if !strings.HasPrefix(text, "⚠") {
-			b.WriteString("⚠️ ")
 		}
 		b.WriteString(text)
 	}

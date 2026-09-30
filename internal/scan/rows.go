@@ -54,16 +54,16 @@ func FromReport(rep detect.Report, hash string) []Row {
 		}
 		antis := antiSet(lib.AntiFeatures)
 		if strings.EqualFold(lib.Type, "Mobile Analytics") || antis["Tracking"] {
-			note("tracking", label)
+			note("no_tracking", label)
 		}
 		if strings.EqualFold(lib.Type, "Advertisement") || antis["Ads"] {
-			note("ads", label)
+			note("no_ads", label)
 		}
 		if googlePlay(lib) {
-			note("google_services", "Google Play services: "+label)
+			note("no_google_services", "Google Play services: "+label)
 		}
 		if firebaseMessaging(lib) {
-			note("google_services", "Firebase Cloud Messaging: "+label)
+			note("no_google_services", "Firebase Cloud Messaging: "+label)
 		}
 	}
 	for _, fact := range libOrder {
@@ -75,16 +75,33 @@ func FromReport(rep detect.Report, hash string) []Row {
 	for _, row := range rows {
 		found[row.Fact] = true
 	}
-	// A finished library scan that did not find these SDKs is a no.
-	// Ads and tracking stay absent: the corpus does not cover every network.
-	if !found["google_services"] {
-		add("google_services", "")
+	// yes: neither Play services nor Firebase Cloud Messaging. Notes stay empty.
+	// no: one or both, and the notes name which.
+	// no_ads and no_tracking are no when a library is present, and left out otherwise.
+	// A no_google_services no also sets no_tracking to no, with empty notes when that is the only reason.
+	if !found["no_google_services"] {
+		add("no_google_services", "")
+	} else {
+		setValue(rows, "no_google_services", "no")
+	}
+	if found["no_ads"] {
+		setValue(rows, "no_ads", "no")
+	}
+	if found["no_tracking"] {
+		setValue(rows, "no_tracking", "no")
+	} else if valueOf(rows, "no_google_services") == "no" {
+		add("no_tracking", "")
 		rows[len(rows)-1].Value = "no"
 	}
 	if rep.Manifest {
 		grouped := map[string][]string{}
 		var order []string
+		background := false
 		for _, raw := range rep.Permissions {
+			if strings.EqualFold(strings.TrimSpace(raw), "android.permission.ACCESS_BACKGROUND_LOCATION") {
+				background = true
+				continue
+			}
 			fact, ok := permissionFact(raw)
 			if !ok {
 				continue
@@ -92,15 +109,19 @@ func FromReport(rep detect.Report, hash string) []Row {
 			if _, seen := grouped[fact]; !seen {
 				order = append(order, fact)
 			}
-			grouped[fact] = append(grouped[fact], strings.TrimPrefix(raw, "android.permission."))
+			id := strings.TrimPrefix(raw, "android.permission.")
+			grouped[fact] = append(grouped[fact], id)
 		}
 		for _, fact := range order {
 			ev := uniq(grouped[fact])
+			if background && (fact == "coarse_location" || fact == "fine_location") {
+				ev = append(ev, "ACCESS_BACKGROUND_LOCATION")
+			}
 			sort.Strings(ev)
 			add(fact, strings.Join(ev, ", "))
 		}
 		if !HasInternet(rep.Permissions) {
-			add("offline_capable", "")
+			add("offline_capable", "No INTERNET")
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -143,6 +164,14 @@ func firebaseMessaging(lib detect.Library) bool {
 func Reasons(rows []Row) []Row {
 	var out []Row
 	for _, row := range rows {
+		// A no means the libraries are present. The yes, for Google services, is their absence.
+		switch row.Fact {
+		case "no_google_services", "no_ads", "no_tracking":
+			if row.Value == "no" {
+				out = append(out, row)
+				continue
+			}
+		}
 		if row.Value != "yes" || !needsReason(row.Fact) {
 			continue
 		}
@@ -153,11 +182,11 @@ func Reasons(rows []Row) []Row {
 
 func needsReason(fact string) bool {
 	switch fact {
-	case "contacts", "sms", "location", "camera", "microphone", "call_log",
+	case "contacts", "read_sms", "receive_sms", "send_sms",
+		"coarse_location", "fine_location", "camera", "microphone", "call_log",
 		"request_install_packages", "query_all_packages", "system_alert_window",
 		"accessibility_service", "notification_listener", "device_admin",
-		"vpn_service", "input_method", "usage_stats",
-		"tracking", "ads", "google_services":
+		"vpn_service", "input_method", "usage_stats":
 		return true
 	default:
 		return false
@@ -168,10 +197,16 @@ func permissionFact(raw string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "android.permission.read_contacts", "android.permission.write_contacts":
 		return "contacts", true
-	case "android.permission.read_sms", "android.permission.receive_sms", "android.permission.send_sms":
-		return "sms", true
-	case "android.permission.access_fine_location", "android.permission.access_coarse_location", "android.permission.access_background_location":
-		return "location", true
+	case "android.permission.read_sms":
+		return "read_sms", true
+	case "android.permission.receive_sms":
+		return "receive_sms", true
+	case "android.permission.send_sms":
+		return "send_sms", true
+	case "android.permission.access_coarse_location":
+		return "coarse_location", true
+	case "android.permission.access_fine_location":
+		return "fine_location", true
 	case "android.permission.camera":
 		return "camera", true
 	case "android.permission.record_audio":
@@ -199,6 +234,23 @@ func permissionFact(raw string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func setValue(rows []Row, fact, value string) {
+	for i := range rows {
+		if rows[i].Fact == fact {
+			rows[i].Value = value
+		}
+	}
+}
+
+func valueOf(rows []Row, fact string) string {
+	for _, row := range rows {
+		if row.Fact == fact {
+			return row.Value
+		}
+	}
+	return ""
 }
 
 func antiSet(in []string) map[string]bool {

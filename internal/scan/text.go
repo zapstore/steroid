@@ -13,10 +13,16 @@ func Prose(rows []Row) string {
 		if row.Basis != "apk" {
 			continue
 		}
-		if row.Value == "no" && row.Fact == "google_services" {
+		if row.Value == "no" && (row.Fact == "no_google_services" || row.Fact == "no_ads" || row.Fact == "no_tracking") {
+			text := Describe(row)
+			if text == "" {
+				continue
+			}
 			b.WriteString("- ")
 			b.WriteString(row.Fact)
-			b.WriteString(": no\n")
+			b.WriteString(": ")
+			b.WriteString(text)
+			b.WriteByte('\n')
 			continue
 		}
 		if row.Value != "yes" {
@@ -38,20 +44,32 @@ func Prose(rows []Row) string {
 // Describe is one fact in plain English. Permission identifiers stay out.
 func Describe(row Row) string {
 	switch row.Fact {
-	case "tracking":
+	case "no_tracking":
+		if strings.TrimSpace(row.Evidence) == "" {
+			return ""
+		}
 		return withEvidence("Includes a tracker", row.Evidence)
-	case "ads":
+	case "no_ads":
 		return withEvidence("Includes ads", row.Evidence)
-	case "google_services":
+	case "no_google_services":
+		if row.Value == "yes" {
+			return "No Google services"
+		}
 		return withEvidence("Includes Google services", row.Evidence)
 	case "offline_capable":
-		return "No network permission"
+		return "No INTERNET"
 	case "contacts":
 		return "Can read contacts"
-	case "sms":
-		return "Can read or send SMS"
-	case "location":
-		return "Can read location"
+	case "read_sms":
+		return "Can read SMS"
+	case "receive_sms":
+		return "Can receive SMS"
+	case "send_sms":
+		return "Can send SMS"
+	case "coarse_location":
+		return "Can read coarse location"
+	case "fine_location":
+		return "Can read fine location"
 	case "camera":
 		return "Can use the camera"
 	case "microphone":

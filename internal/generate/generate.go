@@ -269,18 +269,20 @@ func ParseSheet(raw string) (Facts, map[string]string, bool, error) {
 
 func setFact(f *Facts, fact, value string) {
 	switch fact {
-	case "google_services":
-		f.GoogleServices = value
-	case "ads":
-		f.Ads = value
-	case "tracking":
-		f.Tracking = value
+	case "no_google_services":
+		f.NoGoogleServices = value
+	case "no_ads":
+		f.NoAds = value
+	case "no_tracking":
+		f.NoTracking = value
 	case "offline_capable":
 		f.OfflineCapable = value
-	case "account_required":
-		f.AccountRequired = value
+	case "accountless":
+		f.Accountless = value
 	case "e2ee":
 		f.E2EE = value
+	case "decentralized":
+		f.Decentralized = value
 	case "open_source":
 		f.OpenSource = value
 	}
