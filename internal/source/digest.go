@@ -147,20 +147,22 @@ type manifestInfo struct {
 // skipManifest omits the manifest permission list when the APK scan already produced it.
 // uses are the yes facts that need a call-site quote.
 func Read(t *Tree, skipManifest bool, uses []Use) Digest {
-	return read(context.Background(), t, skipManifest, uses, nil, "")
+	return ReadWith(context.Background(), t, skipManifest, uses, "")
 }
 
-// ReadWith is Read, and ranks outbound call sites with embed when it is set.
-// A nil embedder keeps the keyword order. An embedder error does too.
+// ReadWith is Read with a cancellable walk.
 // project is APK inventory. Empty omits the Project section.
-func ReadWith(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Embedder, project string) Digest {
+// Kotlin, Java, JavaScript, and TypeScript calls are parsed. A function that
+// sends data is quoted, and so is one caller of that function. Other languages
+// stay on the line scan.
+func ReadWith(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project string) Digest {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return read(ctx, t, skipManifest, uses, embed, project)
+	return read(ctx, t, skipManifest, uses, project)
 }
 
-func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Embedder, project string) Digest {
+func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project string) Digest {
 	if t == nil || t.Dir == "" {
 		return Digest{}
 	}
@@ -176,8 +178,10 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Emb
 		account    *quote
 		encrypt    *quote
 		offline    *quote
-		chunks     []indexedChunk
+		parsed     []parsedSrc
 	)
+	parser := newSinkParser()
+	defer parser.Close()
 	addHit := func(topic, fact, rel string, line int, text string, around []hit) {
 		if counts[fact] >= maxPerFact || len(hits) >= maxDigestSignals {
 			return
@@ -217,10 +221,11 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Emb
 		lines := strings.Split(string(raw), "\n")
 		scanFile(rel, lines, addHit)
 		if codeExt(rel) {
-			if embed != nil {
-				chunks = appendChunks(chunks, rel, lines)
+			if src, ok := parser.parse(ctx, rel, raw); ok {
+				parsed = append(parsed, src)
+			} else {
+				outbound = append(outbound, collectOutbound(rel, raw)...)
 			}
-			outbound = append(outbound, collectOutbound(rel, raw)...)
 			if account == nil {
 				if q, ok := findQuote(rel, lines, accountLine); ok {
 					account = &q
@@ -240,8 +245,13 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, embed Emb
 		captureUses(rel, lines, uses, useQuotes)
 		return nil
 	})
-	outbound = selectOutbound(ctx, outbound, embed)
-	outbound, account, encrypt, offline = applySourceIndex(ctx, embed, chunks, uses, useQuotes, outbound, account, encrypt, offline)
+	outbound = mergeOutbound(outbound, parsed)
+	for fact, q := range deviceQuotes(parsed) {
+		if !askedFact(uses, fact) {
+			continue
+		}
+		useQuotes[fact] = q
+	}
 	sort.Slice(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
 		if a.topic != b.topic {
@@ -391,7 +401,23 @@ type outboundGroup struct {
 	score int
 }
 
-func selectOutbound(ctx context.Context, lines []hit, embed Embedder) []hit {
+func mergeOutbound(keyword []hit, parsed []parsedSrc) []hit {
+	groups := groupByPath(keyword)
+	groups = append(groups, sinkGroups(parsed)...)
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].score > groups[j].score
+	})
+	if len(groups) > maxOutboundFiles {
+		groups = groups[:maxOutboundFiles]
+	}
+	var out []hit
+	for _, g := range groups {
+		out = append(out, g.lines...)
+	}
+	return out
+}
+
+func groupByPath(lines []hit) []outboundGroup {
 	var groups []outboundGroup
 	for _, line := range lines {
 		if len(groups) == 0 || groups[len(groups)-1].path != line.path {
@@ -403,21 +429,16 @@ func selectOutbound(ctx context.Context, lines []hit, embed Embedder) []hit {
 	for i := range groups {
 		groups[i].score = outboundScore(groups[i].lines)
 	}
-	if ranked, ok := rankOutbound(ctx, groups, embed); ok {
-		groups = ranked
-	} else {
-		sort.SliceStable(groups, func(i, j int) bool {
-			return groups[i].score > groups[j].score
-		})
+	return groups
+}
+
+func askedFact(uses []Use, fact string) bool {
+	for _, use := range uses {
+		if use.Fact == fact {
+			return true
+		}
 	}
-	if len(groups) > maxOutboundFiles {
-		groups = groups[:maxOutboundFiles]
-	}
-	var out []hit
-	for _, g := range groups {
-		out = append(out, g.lines...)
-	}
-	return out
+	return false
 }
 
 func outboundScore(lines []hit) int {

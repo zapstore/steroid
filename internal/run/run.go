@@ -11,7 +11,6 @@ import (
 	"github.com/zapstore/steroid/internal/config"
 	"github.com/zapstore/steroid/internal/detect"
 	"github.com/zapstore/steroid/internal/generate"
-	"github.com/zapstore/steroid/internal/potion"
 	"github.com/zapstore/steroid/internal/review"
 	"github.com/zapstore/steroid/internal/scan"
 	"github.com/zapstore/steroid/internal/source"
@@ -58,11 +57,10 @@ func site(in Input) string {
 
 // Overview calls the LLM. summary is the about text.
 // note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version, modelDir string, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
+func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, pkg, version string, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", nil, "", err
 	}
-	embed := sourceEmbed(modelDir)
 	if tree != nil && pkg != "" {
 		if ok, _ := source.Compare(tree, pkg, version); !ok {
 			tree = nil
@@ -70,7 +68,7 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	}
 	var reviewErr error
 	if tree != nil {
-		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, embed, project)
+		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, project)
 		if err == nil {
 			about, security, facts, err := finish(gen, rows)
 			return about, security, facts, llmNote("review", gen.ProviderModel), err
@@ -79,7 +77,7 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	}
 	src := ""
 	if tree != nil {
-		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), embed, project).Text
+		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), project).Text
 	}
 	gen, err := generate.Run(ctx, cfg, client, generate.Input{
 		App:       app,
@@ -101,18 +99,6 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	}
 	about, security, facts, err := finish(gen, rows)
 	return about, security, facts, note, err
-}
-
-// sourceEmbed is the static code model chromem ranks windows with.
-// The leaf model is only used for the stored app vector.
-func sourceEmbed(modelDir string) source.Embedder {
-	if strings.TrimSpace(modelDir) == "" {
-		return nil
-	}
-	dir := potion.Dir(modelDir)
-	return func(ctx context.Context, text string) ([]float32, error) {
-		return potion.Embed(ctx, dir, text)
-	}
 }
 
 func llmNote(path, model string) string {

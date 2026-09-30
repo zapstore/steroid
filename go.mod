@@ -9,7 +9,7 @@ require (
 	github.com/klauspost/compress v1.20.0
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/nbd-wtf/go-nostr v0.52.3
-	github.com/philippgille/chromem-go v0.7.0
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/yalue/onnxruntime_go v1.25.0
 	github.com/zapstore/relay v0.0.0
 	github.com/zapstore/zsp v0.0.0-00010101000000-000000000000

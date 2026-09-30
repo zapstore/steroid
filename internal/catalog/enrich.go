@@ -196,7 +196,7 @@ func Enrich(ctx context.Context, data, modelDir string, listing Listing, authorP
 		}
 		var summary, sec string
 		var err error
-		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, modelDir, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
+		summary, sec, factBytes, _, err = run.Overview(ctx, cfg, client, run.AppOf(in), tree, in.AppID, in.Version, rows, prevAbout, prevSecurity, readText(dir, fileFacts), project)
 		if err != nil {
 			if w.About {
 				rep.fail("about", err)

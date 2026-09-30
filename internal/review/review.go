@@ -14,7 +14,7 @@ import (
 )
 
 // Run sends the source digest once and returns the overview.
-func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, about, security, prevFacts string, embed source.Embedder, project string) (generate.Result, error) {
+func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *source.Tree, app generate.App, sheet []scan.Row, about, security, prevFacts, project string) (generate.Result, error) {
 	if tree == nil || tree.Dir == "" {
 		return generate.Result{}, fmt.Errorf("source tree required")
 	}
@@ -24,7 +24,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 	if client == nil {
 		return generate.Result{}, fmt.Errorf("http client required")
 	}
-	digest := source.ReadWith(ctx, tree, scan.HasAPK(sheet), source.Uses(sheet), embed, project)
+	digest := source.ReadWith(ctx, tree, scan.HasAPK(sheet), source.Uses(sheet), project)
 	if strings.TrimSpace(digest.Text) == "" {
 		return generate.Result{}, fmt.Errorf("empty source digest")
 	}

@@ -1,7 +1,6 @@
 package source
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +37,7 @@ func TestReadDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := ReadWith(t.Context(), &Tree{Dir: dir}, false, nil, nil, "package: com.example.calc\nnative: libapp.so").Text
+	got := ReadWith(t.Context(), &Tree{Dir: dir}, false, nil, "package: com.example.calc\nnative: libapp.so").Text
 	for _, want := range []string{
 		"README.md",
 		"android/app/src/main/AndroidManifest.xml",
@@ -70,41 +69,31 @@ func TestReadDigest(t *testing.T) {
 	}
 }
 
-func TestChromemFindsSourceFactsWithoutPhrases(t *testing.T) {
+func TestSinkQuotesSendAndItsCaller(t *testing.T) {
 	dir := t.TempDir()
 	lib := filepath.Join(dir, "lib")
 	if err := os.MkdirAll(lib, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	notes := "fun show() {\n  notes.value = noteDao.all()\n}\n"
-	decoy := "// works offline\nfun banner() {\n  return true\n}\n"
-	gate := "fun enter() {\n  gate.required()\n}\n"
-	login := "fun login() {\n  return\n}\n"
-	for name, body := range map[string]string{
-		"notes.kt": notes, "banner.kt": decoy, "enter.kt": gate, "login.kt": login,
-	} {
-		if err := os.WriteFile(filepath.Join(lib, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	leak := "fun ping() {\n  client.post(androidId.toRequestBody())\n}\n"
+	home := "fun refresh() {\n  ping()\n}\n"
+	if err := os.WriteFile(filepath.Join(lib, "leak.kt"), []byte(leak), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	embed := func(_ context.Context, text string) ([]float32, error) {
-		switch {
-		case strings.Contains(text, "noteDao"), strings.Contains(text, "loads what the person sees"):
-			return []float32{1, 0, 0}, nil
-		case strings.Contains(text, "gate.required"), strings.Contains(text, "sign-in that blocks"):
-			return []float32{0, 1, 0}, nil
-		default:
-			return []float32{0, 0, 1}, nil
-		}
+	if err := os.WriteFile(filepath.Join(lib, "home.kt"), []byte(home), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	got := ReadWith(t.Context(), &Tree{Dir: dir}, true, nil, embed, "").Text
-	offline := digestSection(got, "Offline:")
-	account := digestSection(got, "Account:")
-	if !strings.Contains(offline, "noteDao") || strings.Contains(offline, "banner.kt") {
-		t.Fatalf("offline section:\n%s", offline)
+	got := Read(&Tree{Dir: dir}, true, nil).Text
+	if !strings.Contains(got, "client.post(androidId.toRequestBody())") {
+		t.Fatalf("missing send\n%s", got)
 	}
-	if !strings.Contains(account, "gate.required") || strings.Contains(account, "login.kt") {
-		t.Fatalf("account section:\n%s", account)
+	if !strings.Contains(got, "lib/home.kt") || !strings.Contains(got, "ping()") {
+		t.Fatalf("missing caller\n%s", got)
+	}
+	send := strings.Index(got, "client.post")
+	caller := strings.Index(got, "lib/home.kt")
+	if send < 0 || caller < 0 || caller < send {
+		t.Fatalf("caller should follow the send\n%s", got)
 	}
 }
 
@@ -120,15 +109,44 @@ func digestSection(text, title string) string {
 	return rest
 }
 
-func TestOutboundChromemPrefersExfilOverKeyword(t *testing.T) {
+func TestSinkQuotesDeviceCallWithTheSend(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mention := "fun note() {\n  // fusedlocationprovider\n}\n"
+	track := "fun track() {\n  loc.getLastLocation()\n  client.post(loc.toRequestBody())\n}\n"
+	if err := os.WriteFile(filepath.Join(src, "mention.kt"), []byte(mention), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "track.kt"), []byte(track), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	java := "class Leak {\n  void upload() {\n    client.post(id);\n  }\n}\n"
+	if err := os.WriteFile(filepath.Join(src, "Leak.java"), []byte(java), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "location"}}).Text
+	uses := digestSection(got, "Uses:")
+	if !strings.Contains(uses, "src/track.kt") || !strings.Contains(uses, "getLastLocation()") || !strings.Contains(uses, "client.post") {
+		t.Fatalf("location quote\n%s", uses)
+	}
+	if strings.Contains(uses, "mention.kt") {
+		t.Fatalf("comment won the quote\n%s", uses)
+	}
+	if !strings.Contains(got, "void upload()") || !strings.Contains(got, "client.post(id)") {
+		t.Fatalf("java send missing\n%s", got)
+	}
+}
+
+func TestSinkPrefersDevicePayload(t *testing.T) {
 	dir := t.TempDir()
 	lib := filepath.Join(dir, "lib")
 	if err := os.MkdirAll(lib, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Keyword score ranks this first: a post that names an email.
 	news := "fun subscribe() {\n  client.post(email.toRequestBody())\n}\n"
-	// Keyword score ranks this second. The embedder treats the device id as the leak.
 	leak := "fun ping() {\n  client.post(androidId.toRequestBody())\n}\n"
 	if err := os.WriteFile(filepath.Join(lib, "news.kt"), []byte(news), 0o644); err != nil {
 		t.Fatal(err)
@@ -136,19 +154,11 @@ func TestOutboundChromemPrefersExfilOverKeyword(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lib, "leak.kt"), []byte(leak), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	embed := func(_ context.Context, text string) ([]float32, error) {
-		switch {
-		case strings.Contains(text, "androidId"), strings.Contains(text, "personal data sent"):
-			return []float32{1, 0}, nil
-		default:
-			return []float32{0, 1}, nil
-		}
-	}
-	got := ReadWith(t.Context(), &Tree{Dir: dir}, true, nil, embed, "").Text
+	got := Read(&Tree{Dir: dir}, true, nil).Text
 	leakAt := strings.Index(got, "androidId")
 	newsAt := strings.Index(got, "email")
 	if leakAt < 0 || newsAt < 0 || leakAt > newsAt {
-		t.Fatalf("exfil site should lead\n%s", got)
+		t.Fatalf("device send should lead\n%s", got)
 	}
 }
 
