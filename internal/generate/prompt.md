@@ -56,7 +56,7 @@ Do not change `no_google_services`. The scan sets it. If it left `notes` empty, 
 | offline_capable | yes/no | No `INTERNET`: `yes`, notes `No INTERNET`. `INTERNET` is present, and the listing or source shows the main use works offline: `yes`, and notes say `INTERNET` is still there. Otherwise `no`, notes empty. |
 | accountless | yes/no/unknown | `yes`: no remote login. A Nostr key, or a similar key on the phone, counts. `no`: a login screen blocks the app at startup. |
 | e2ee | yes/unknown | `yes` only when the developer claims real end-to-end encryption and the source backs that. HTTPS, or a crypto library alone, is not `yes`. |
-| decentralized | yes/unknown | `yes` when the developer claims it, the source backs that, and the app does not depend on one server. |
+| decentralized | yes/unknown | `yes` when the app is Nostr-based. Also `yes` when the developer claims it, the source backs that, and the app does not depend on one server. |
 | open_source | yes/no | `yes` when this message includes real source code and the listing license is free: MIT, BSD, ISC, Apache-2.0, MPL, LGPL, GPL, AGPL, Unlicense, or 0BSD. Notes are only that license code, such as `Apache-2.0`. `no` when there is no repository, the repository has no real code, or the license is missing or not one of those. |
 
 Permission rows use the same CSV. Keep every row the scan included. Do not add one it missed. The value stays `yes`.
