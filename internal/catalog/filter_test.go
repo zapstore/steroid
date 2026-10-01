@@ -32,10 +32,11 @@ func TestOnlyMatchingDropsOtherApps(t *testing.T) {
 	const author = "aa"
 	next := State{Listings: []Listing{
 		{AppID: "com.maps", App: nostr.Event{PubKey: author}},
+		{AppID: "com.maps.unchanged", App: nostr.Event{PubKey: author}},
 		{AppID: "com.other"},
 	}}
 	diff := Diff{
-		Apps:       []string{"com.other"},
+		Apps:       []string{"com.maps", "com.other"},
 		AppDeletes: []string{"com.maps.gone", "com.other.gone"},
 		Events: []nostr.Event{
 			{ID: "map-app", Kind: 32267, Tags: nostr.Tags{{"d", "com.maps"}}},

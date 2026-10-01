@@ -13,7 +13,7 @@ import (
 )
 
 // Publish stores snapshot n+1 and the adjacent bundle. Identical state does nothing.
-// filter keeps the diff to apps whose id contains it, including their artifact files when the events are unchanged.
+// filter keeps diff entries whose app id contains it. It does not add apps that were not already in the diff.
 // matchAPK includes an app's artifact files only when its cache apk line equals the listing asset hash.
 func Publish(ctx context.Context, data string, next State, signer Signer, bundledAt int64, filter string, matchAPK bool) (int64, error) {
 	if err := os.MkdirAll(SnapDir(data), 0o755); err != nil {
