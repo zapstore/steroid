@@ -5,3 +5,4 @@ dist/
 .tools/
 testdata/
 .env
+SPEC.md

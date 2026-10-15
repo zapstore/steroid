@@ -27,8 +27,8 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 	for _, row := range rows {
 		got[row.Fact+" "+row.Evidence] = row
 		switch row.Fact {
-		case "no_google_services", "no_ads", "no_tracking":
-			if row.Value != "no" || row.Basis != "apk" || row.Source != "abc" {
+		case "google_services", "ads", "tracking":
+			if row.Value != "yes" || row.Basis != "apk" || row.Source != "abc" {
 				t.Fatalf("%+v", row)
 			}
 			continue
@@ -38,8 +38,8 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 		}
 	}
 	for _, key := range []string{
-		"no_tracking Firebase Analytics",
-		"no_ads AdMob",
+		"tracking Firebase Analytics",
+		"ads AdMob",
 		"read_sms READ_SMS",
 		"query_all_packages QUERY_ALL_PACKAGES",
 		"offline_capable No INTERNET",
@@ -53,11 +53,11 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 		if row.Fact == "gms" || row.Fact == "fcm" {
 			t.Fatal(row)
 		}
-		if row.Fact == "no_google_services" {
+		if row.Fact == "google_services" {
 			google = append(google, row)
 		}
 	}
-	if len(google) != 1 || google[0].Value != "no" ||
+	if len(google) != 1 || google[0].Value != "yes" ||
 		!strings.Contains(google[0].Evidence, "Google Play services: Play Services") ||
 		!strings.Contains(google[0].Evidence, "Firebase Cloud Messaging: Firebase") {
 		t.Fatalf("%+v", google)
@@ -82,7 +82,7 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 	}
 }
 
-func TestPlayServicesSetsNoTracking(t *testing.T) {
+func TestPlayServicesSetsTracking(t *testing.T) {
 	rows := FromReport(detect.Report{
 		Libraries: []detect.Library{{ID: "/com/google/android/gms", Name: "Play Services"}},
 	}, "abc")
@@ -92,13 +92,13 @@ func TestPlayServicesSetsNoTracking(t *testing.T) {
 		got[row.Fact] = row.Value
 		notes[row.Fact] = row.Evidence
 	}
-	if got["no_google_services"] != "no" || notes["no_google_services"] == "" {
+	if got["google_services"] != "yes" || notes["google_services"] == "" {
 		t.Fatalf("%+v", rows)
 	}
-	if got["no_tracking"] != "no" || notes["no_tracking"] != "" {
+	if got["tracking"] != "yes" || notes["tracking"] != "" {
 		t.Fatalf("tracking %+v", rows)
 	}
-	if _, ok := got["no_ads"]; ok {
+	if _, ok := got["ads"]; ok {
 		t.Fatal(rows)
 	}
 }
@@ -139,7 +139,7 @@ func TestInternetPresentOmitsOffline(t *testing.T) {
 	for _, row := range rows {
 		got[row.Fact] = row.Value
 	}
-	if got["no_google_services"] != "yes" || len(rows) != 1 {
+	if got["google_services"] != "no" || len(rows) != 1 {
 		t.Fatalf("%+v", rows)
 	}
 	if CSV(nil) != nil {
@@ -168,12 +168,12 @@ func TestCSVColumns(t *testing.T) {
 		t.Fatalf("%s", installed)
 	}
 	repeated := string(CSV([]Row{
-		{Fact: "no_tracking", Value: "no", Reason: "crash reports"},
-		{Fact: "no_tracking", Value: "no", Evidence: "Firebase Analytics", Reason: "crash reports"},
-		{Fact: "no_tracking", Value: "no", Evidence: "Sentry", Reason: "crash reports"},
-		{Fact: "no_tracking", Value: "no", Reason: "crash reports"},
+		{Fact: "tracking", Value: "yes", Reason: "crash reports"},
+		{Fact: "tracking", Value: "yes", Evidence: "Firebase Analytics", Reason: "crash reports"},
+		{Fact: "tracking", Value: "yes", Evidence: "Sentry", Reason: "crash reports"},
+		{Fact: "tracking", Value: "yes", Reason: "crash reports"},
 	}))
-	if strings.Count(repeated, "\"no_tracking\"") != 1 {
+	if strings.Count(repeated, "\"tracking\"") != 1 {
 		t.Fatalf("%s", repeated)
 	}
 	if !strings.Contains(repeated, "Firebase Analytics") || !strings.Contains(repeated, "Sentry") {

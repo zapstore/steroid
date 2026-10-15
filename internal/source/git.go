@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,18 +21,29 @@ type Revision struct {
 	Commit string
 }
 
+// AtCommit returns rev at commit. It does not ask the remote which commit that is.
+func AtCommit(repo, commit string) (Revision, error) {
+	remote := strings.TrimSpace(repo)
+	if err := allowedRemote(remote); err != nil {
+		return Revision{}, err
+	}
+	sha, ok := parseCommit(commit)
+	if !ok {
+		return Revision{}, fmt.Errorf("commit %q", commit)
+	}
+	return Revision{Remote: remote, Commit: sha}, nil
+}
+
 // Resolve lists tags with git ls-remote and picks the tag closest to version.
 // The commit is HEAD when no tag is close.
 func Resolve(ctx context.Context, repo, version string) (Revision, error) {
 	remote := strings.TrimSpace(repo)
-	if remote == "" || isNostrRepo(remote) {
-		return Revision{}, fmt.Errorf("repository %s: not a git remote", repo)
+	if err := allowedRemote(remote); err != nil {
+		return Revision{}, err
 	}
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", remote, "HEAD", "refs/tags/*")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
+	out, err := runGit(ctx, "", "ls-remote", "--", remote, "HEAD", "refs/tags/*")
 	if err != nil {
-		return Revision{}, fmt.Errorf("ls-remote %s: %w: %s", remote, err, bytes.TrimSpace(out))
+		return Revision{}, err
 	}
 	head, tags := parseGitRefs(out)
 	ref := ""
@@ -49,23 +61,24 @@ func Resolve(ctx context.Context, repo, version string) (Revision, error) {
 }
 
 // Checkout clones rev at depth 1 and drops .git.
+// A revision with no ref is fetched as that commit.
 func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
+	if err := allowedRemote(rev.Remote); err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp("", "steroid-src-*")
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"clone", "--quiet", "--depth", "1", "--single-branch"}
-	if rev.Ref != "" {
-		args = append(args, "--branch", rev.Ref)
-	}
-	args = append(args, rev.Remote, dir)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if err := checkout(ctx, rev, dir); err != nil {
 		os.RemoveAll(dir)
-		return nil, fmt.Errorf("%s: %w: %s", rev.Remote, err, bytes.TrimSpace(out))
+		return nil, err
 	}
 	sha := strings.TrimSpace(string(gitOutput(ctx, dir, "rev-parse", "HEAD")))
+	if want, ok := parseCommit(rev.Commit); ok && !strings.EqualFold(sha, want) {
+		os.RemoveAll(dir)
+		return nil, fmt.Errorf("git %s: commit %s", rev.Remote, sha)
+	}
 	if sha == "" {
 		sha = rev.Commit
 	}
@@ -88,14 +101,81 @@ func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
 	return &Tree{URL: label, Commit: sha, Dir: dir, Files: n, Bytes: size}, nil
 }
 
+func checkout(ctx context.Context, rev Revision, dir string) error {
+	if rev.Ref != "" {
+		_, err := runGit(ctx, "", "clone", "--quiet", "--depth", "1", "--single-branch", "--branch", rev.Ref, "--", rev.Remote, dir)
+		return err
+	}
+	if _, err := runGit(ctx, "", "init", "-q", dir); err != nil {
+		return err
+	}
+	if _, err := runGit(ctx, dir, "remote", "add", "origin", rev.Remote); err != nil {
+		return err
+	}
+	if _, err := runGit(ctx, dir, "fetch", "--depth", "1", "origin", rev.Commit); err != nil {
+		return err
+	}
+	_, err := runGit(ctx, dir, "checkout", "--detach", "--quiet", "FETCH_HEAD")
+	return err
+}
+
+func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = gitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, bytes.TrimSpace(out))
+	}
+	return out, nil
+}
+
+func gitEnv() []string {
+	return append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ALLOW_PROTOCOL=https",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=protocol.file.allow",
+		"GIT_CONFIG_VALUE_0=never",
+	)
+}
+
 func gitOutput(ctx context.Context, dir string, args ...string) []byte {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
+	out, err := runGit(ctx, dir, args...)
 	if err != nil {
 		return nil
 	}
 	return out
+}
+
+func allowedRemote(remote string) error {
+	remote = strings.TrimSpace(remote)
+	if remote == "" || isNostrRepo(remote) {
+		return fmt.Errorf("repository %s: not a git remote", remote)
+	}
+	u, err := url.Parse(remote)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("repository %s: not an https remote", remote)
+	}
+	return nil
+}
+
+func parseCommit(s string) (string, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if len(s) != 40 && len(s) != 64 {
+		return "", false
+	}
+	for _, c := range s {
+		if c < '0' || (c > '9' && c < 'a') || c > 'f' {
+			return "", false
+		}
+	}
+	return s, true
 }
 
 func parseGitRefs(raw []byte) (head string, tags map[string]string) {

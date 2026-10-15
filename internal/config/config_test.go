@@ -58,10 +58,33 @@ func TestValidate(t *testing.T) {
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected key error")
 	}
+	c = Config{ProviderURL: "https://api.ppq.ai/v1", APIKey: "k", Model: "m", FallbackURL: "https://nano-gpt.com/api/v1"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected fallback key error")
+	}
+	c.FallbackKey = "n"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewReadsFallback(t *testing.T) {
+	t.Setenv("LLM_URL", "https://api.ppq.ai/v1")
+	t.Setenv("LLM_API_KEY", "a")
+	t.Setenv("LLM_FALLBACK_URL", "https://nano-gpt.com/api/v1")
+	t.Setenv("LLM_FALLBACK_API_KEY", "b")
+	t.Setenv("LLM_MODEL", "m")
+	c := New()
+	if c.ProviderURL != "https://api.ppq.ai/v1" || c.APIKey != "a" || c.Model != "m" {
+		t.Fatalf("%+v", c)
+	}
+	if c.FallbackURL != "https://nano-gpt.com/api/v1" || c.FallbackKey != "b" {
+		t.Fatalf("fallback %+v", c)
+	}
 }
 
 func TestNewSplitsModelList(t *testing.T) {
-	t.Setenv("EMBED_MODEL", " primary , second , , third ")
+	t.Setenv("LLM_MODEL", " primary , second , , third ")
 	c := New()
 	if c.Model != "primary" || len(c.Fallbacks) != 2 || c.Fallbacks[0] != "second" || c.Fallbacks[1] != "third" {
 		t.Fatalf("model %q fallbacks %v", c.Model, c.Fallbacks)

@@ -103,6 +103,36 @@ func TestBlankNoChange(t *testing.T) {
 	}
 }
 
+func TestPlanListingIconDoesNotDownload(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "https://cdn.example/old.webp"}
+	o := observed{
+		APK: "apk", Feature: "feat", Facts: "fcm:yes", IconURL: "https://cdn.example/new.webp",
+		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
+	}
+	got := plan(m, o)
+	if !got.Icon || got.Download || got.Scan || got.About || got.Security {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestNextMemoKeepsHashesWhenAStageFails(t *testing.T) {
+	prev := memo{Version: enrichVersion, APK: "old", Feature: "feat", Facts: "facts", Icon: "apk", About: "about"}
+	got := nextMemo(prev, "new", "feat2", "facts2", "https://cdn.example/a.webp", "about2", stageDone{})
+	if got != prev {
+		t.Fatalf("failed run stored %+v", got)
+	}
+	got = nextMemo(prev, "new", "feat2", "facts2", "apk", "about2", stageDone{
+		Scan: true, Security: true, About: true, Vector: true, Icon: true, Feature: true,
+	})
+	if got.APK != "new" || got.Feature != "feat2" || got.Facts != "facts2" || got.About != "about2" || got.Icon != "apk" {
+		t.Fatalf("%+v", got)
+	}
+	got = nextMemo(prev, "new", "feat2", "facts2", "apk", "about2", stageDone{Scan: true, Security: false, About: false, Vector: true, Feature: true})
+	if got.APK != "old" || got.Facts != "facts" || got.Feature != "feat" {
+		t.Fatalf("partial %+v", got)
+	}
+}
+
 func TestPlanMissingSecurityRunsWithoutACommit(t *testing.T) {
 	o := observed{APK: "apk", Feature: "feat", Repo: true, HasIcon: true}
 	got := plan(memo{}, o)

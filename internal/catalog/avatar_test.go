@@ -1,36 +1,35 @@
 package catalog
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zapstore/steroid/artifacts"
 )
 
-func TestSaveAvatarWritesHexFile(t *testing.T) {
+func TestSaveAvatarWritesTheRow(t *testing.T) {
 	data := t.TempDir()
+	db, err := artifacts.Open(t.Context(), artifacts.Path(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 	pubkey := strings.Repeat("ab", 32)
-	if err := saveAvatar(data, pubkey, []byte("webp")); err != nil {
+	if err := db.SetAvatar(t.Context(), pubkey, "https://example/p", []byte("webp")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(data, "artifacts", pubkey+".webp"))
-	if err != nil {
+	got, ok, err := db.Avatar(t.Context(), pubkey)
+	if err != nil || !ok || string(got.WebP) != "webp" {
+		t.Fatalf("ok %v err %v avatar %+v", ok, err, got)
+	}
+	if err := db.SetAvatar(t.Context(), pubkey, "https://example/p", nil); err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "webp" {
-		t.Fatalf("avatar = %q", got)
+	got, ok, err = db.Avatar(t.Context(), pubkey)
+	if err != nil || !ok || string(got.WebP) != "webp" {
+		t.Fatalf("empty write cleared the picture: ok %v err %v %+v", ok, err, got)
 	}
-	if err := saveAvatar(data, pubkey, nil); err != nil {
-		t.Fatal(err)
-	}
-	got, err = os.ReadFile(filepath.Join(data, "artifacts", pubkey+".webp"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "webp" {
-		t.Fatalf("avatar overwritten with empty = %q", got)
-	}
-	if err := saveAvatar(data, "npub1alice", []byte("webp")); err == nil {
-		t.Fatal("npub filename accepted")
+	if err := db.SetAvatar(t.Context(), "npub1alice", "https://example/p", []byte("webp")); err == nil {
+		t.Fatal("npub pubkey accepted")
 	}
 }

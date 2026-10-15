@@ -48,7 +48,7 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, tree *sour
 }
 
 func once(ctx context.Context, cfg config.Config, client *http.Client, model string, app generate.App, sheet []scan.Row, digest, about, security, prevFacts string) (generate.Result, error) {
-	aboutText, securityText, factsText, err := generate.Turn(ctx, cfg, client, model, generate.Record(app, sheet, digest, about, security), about, security)
+	aboutText, securityText, factsText, keywords, queries, err := generate.Turn(ctx, cfg, client, model, generate.Record(app, sheet, digest, about, security), about, security)
 	if err != nil {
 		return generate.Result{}, err
 	}
@@ -61,6 +61,8 @@ func once(ctx context.Context, cfg config.Config, client *http.Client, model str
 		Security:      notes.Security,
 		Facts:         notes.Facts,
 		Reason:        notes.Reason,
+		Keywords:      keywords,
+		Queries:       queries,
 		Summary:       notes.About,
 		ProviderModel: model,
 	}, nil

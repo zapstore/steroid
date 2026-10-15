@@ -13,7 +13,7 @@ func Prose(rows []Row) string {
 		if row.Basis != "apk" {
 			continue
 		}
-		if row.Value == "no" && (row.Fact == "no_google_services" || row.Fact == "no_ads" || row.Fact == "no_tracking") {
+		if row.Fact == "google_services" && row.Value == "no" {
 			text := Describe(row)
 			if text == "" {
 				continue
@@ -44,15 +44,15 @@ func Prose(rows []Row) string {
 // Describe is one fact in plain English. Permission identifiers stay out.
 func Describe(row Row) string {
 	switch row.Fact {
-	case "no_tracking":
+	case "tracking":
 		if strings.TrimSpace(row.Evidence) == "" {
 			return ""
 		}
 		return withEvidence("Includes a tracker", row.Evidence)
-	case "no_ads":
+	case "ads":
 		return withEvidence("Includes ads", row.Evidence)
-	case "no_google_services":
-		if row.Value == "yes" {
+	case "google_services":
+		if row.Value == "no" {
 			return "No Google services"
 		}
 		return withEvidence("Includes Google services", row.Evidence)

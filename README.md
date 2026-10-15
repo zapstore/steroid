@@ -1,40 +1,47 @@
 # steroid
 
-Enriches Zapstore listings and publishes catalog snapshots from the relay database.
+Steroid is the enricher. It writes the about text, the security text, the icon, and the search vector to `data/artifacts.db`. The catalog relay calls `github.com/zapstore/steroid/enrich` on each bundle tick for the apps in the diff. A cache hit does nothing. The relay then writes the snapshot.
 
 ```
 steroid -v
-steroid enrich --filter app_id [--debug] [--force]
-steroid serve
-steroid bundle [--filter app_id] [--no-enrich] [--debug]
+steroid [--debug] [--force] app_id
 ```
 
-`enrich` writes about, security, facts, icon, and embedding for listings whose app ID contains the filter. `--debug` logs each step and writes `prompt` and `response` under `data/debug/<app-id>/`. `--force` deletes those app directories first, so the cache is not reused.
-
-`bundle` reads the relay database, enriches changed listings, and publishes the next snapshot. The snapshot is the full catalog. `--filter` limits enrichment and the diff to those apps. `--no-enrich` publishes without enriching.
-
-`serve` answers `GET /deltas?from=<epoch>` (default `localhost:3339`). Set `BUNDLE_INTERVAL` to a Go duration to publish a bundle on that interval while serving.
+The app id selects listings whose id contains it. Steroid writes about, security, the icon, and the search vector. `--debug` logs each step and writes `prompt` and `response.json` under `data/debug/<app-id>/`. `--force` deletes that app's row first, so the cache is not reused. The server writes the snapshot.
 
 ## Build
 
 ```
-make build
+make
+make linux-arm64
+make linux-amd64
 ```
 
-Needs CGO (`go-sqlite3` with `fts5`). The binary is `dist/steroid`.
+Needs CGO (`go-sqlite3`). The binary is `dist/steroid-<os>-<arch>`.
 
 ## Environment
 
-Reads `.env` from the working directory. Variables already set in the process win.
+Reads `.env` from the working directory. A variable already set in the process wins.
 
-| Variable | Role |
+`SYSTEM_DIRECTORY_PATH` defaults to `.`. Listings are read from `<root>/data/relay.db`. Artifacts are written to `<root>/data/artifacts.db`. `--debug` writes under `<root>/data/debug/<app-id>/`.
+
+Remote model, all `LLM_`. `LLM_URL` is the API root. `LLM_MODEL` is required: first entry, then comma-separated fallbacks on that provider. `LLM_FALLBACK_URL` and `LLM_FALLBACK_API_KEY` are both set or both absent.
+
+| Variable | Required |
 |---|---|
-| `DATA_DIR` | Artifacts and snapshots (default `data`) |
-| `RELAY_DB` | Relay SQLite path |
-| `SYSTEM_DIRECTORY_PATH` | If `RELAY_DB` is unset, uses `<path>/data/relay.db` |
-| `EMBED_PROVIDER_URL`, `EMBED_API_KEY` | Remote LLM for overviews |
-| `EMBED_MODEL` | Required. Model, then fallbacks, comma-separated |
-| `LEAF_MODEL_DIR` | Local embedding model (default `.tools/leaf-ir-v1`) |
-| `SIGN_WITH` | Key for `serve` and `bundle`: `1`, hex, `nsec`, or a NIP-46 bunker URL |
-| `STEROID_ADDRESS` | Listen address (default `localhost:3339`) |
-| `BUNDLE_INTERVAL` | Optional bundle period while serving |
+| `LLM_URL`, `LLM_API_KEY`, `LLM_MODEL` | yes |
+| `LLM_FALLBACK_URL`, `LLM_FALLBACK_API_KEY` | together, or neither |
+
+Local vector model, separate from `LLM_*`.
+
+| Variable | Default |
+|---|---|
+| `LEAF_MODEL_DIR` | `.tools/leaf-ir-v1` |
+| `ONNXRUNTIME_LIB` | the library under `.tools` |
+
+Shared with `zsp`. Same names, same meaning.
+
+| Variable | Default |
+|---|---|
+| `APK_CACHE` | unset: do not read or write the cache |
+| `BLOSSOM_URL` | `https://cdn.zapstore.dev` |

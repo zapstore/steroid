@@ -9,12 +9,12 @@ import (
 
 // Facts is the closed checklist for Zapstore search. Values are yes, no, or unknown.
 type Facts struct {
-	NoGoogleServices string `json:"no_google_services"`
-	NoAds            string `json:"no_ads"`
-	NoTracking       string `json:"no_tracking"`
-	OfflineCapable   string `json:"offline_capable"`
-	E2EE             string `json:"e2ee"`
-	OpenSource       string `json:"open_source"`
+	GoogleServices string `json:"google_services"`
+	Ads            string `json:"ads"`
+	Tracking       string `json:"tracking"`
+	OfflineCapable string `json:"offline_capable"`
+	E2EE           string `json:"e2ee"`
+	OpenSource     string `json:"open_source"`
 }
 
 // MarshalJSON writes yes and no only. Unknown is left out.
@@ -26,9 +26,9 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 			out[key] = value
 		}
 	}
-	put("no_google_services", f.NoGoogleServices)
-	put("no_ads", f.NoAds)
-	put("no_tracking", f.NoTracking)
+	put("google_services", f.GoogleServices)
+	put("ads", f.Ads)
+	put("tracking", f.Tracking)
 	put("offline_capable", f.OfflineCapable)
 	put("e2ee", f.E2EE)
 	put("open_source", f.OpenSource)
@@ -37,9 +37,9 @@ func (f Facts) MarshalJSON() ([]byte, error) {
 
 // Normalize keeps only yes, no, and unknown.
 func (f Facts) Normalize() Facts {
-	f.NoGoogleServices = truth(f.NoGoogleServices)
-	f.NoAds = truth(f.NoAds)
-	f.NoTracking = truth(f.NoTracking)
+	f.GoogleServices = truth(f.GoogleServices)
+	f.Ads = truth(f.Ads)
+	f.Tracking = truth(f.Tracking)
 	f.OfflineCapable = truth(f.OfflineCapable)
 	f.E2EE = truth(f.E2EE)
 	f.OpenSource = truth(f.OpenSource)
@@ -47,7 +47,7 @@ func (f Facts) Normalize() Facts {
 }
 
 // Lock keeps a scanner detection. The model cannot talk those down to no or unknown.
-// no_google_services is copied from the scan: yes when those libraries are absent, no when they are present.
+// google_services is copied from the scan: yes when those libraries are present, no when they are absent.
 // An APK with no INTERNET permission keeps offline_capable at yes.
 // The model may still say yes when the permission is present and the app works offline.
 func Lock(f Facts, rows []scan.Row) Facts {
@@ -56,16 +56,16 @@ func Lock(f Facts, rows []scan.Row) Facts {
 		if row.Basis != "apk" {
 			continue
 		}
-		if row.Fact == "no_google_services" && (row.Value == "yes" || row.Value == "no") {
-			f.NoGoogleServices = row.Value
+		if row.Fact == "google_services" && (row.Value == "yes" || row.Value == "no") {
+			f.GoogleServices = row.Value
 			continue
 		}
-		if row.Value == "no" && (row.Fact == "no_ads" || row.Fact == "no_tracking") {
+		if row.Value == "yes" && (row.Fact == "ads" || row.Fact == "tracking") {
 			switch row.Fact {
-			case "no_ads":
-				f.NoAds = "no"
-			case "no_tracking":
-				f.NoTracking = "no"
+			case "ads":
+				f.Ads = "yes"
+			case "tracking":
+				f.Tracking = "yes"
 			}
 			continue
 		}

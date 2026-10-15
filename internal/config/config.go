@@ -11,11 +11,15 @@ import (
 )
 
 // Config is the remote LLM the overview call uses.
+// FallbackURL and FallbackKey are optional. The chat call uses them when
+// the primary provider is unreachable.
 type Config struct {
 	ProviderURL string
 	APIKey      string
 	Model       string
 	Fallbacks   []string
+	FallbackURL string
+	FallbackKey string
 }
 
 // LoadDotEnv reads .env from the exact working directory. It does not
@@ -36,14 +40,16 @@ func LoadDotEnv() error {
 	return godotenv.Load(path)
 }
 
-// New reads EMBED_* from the environment. EMBED_MODEL is a comma-separated
+// New reads LLM_* from the environment. LLM_MODEL is a comma-separated
 // list: the first entry is the model, and the rest are fallbacks.
 func New() Config {
 	cfg := Config{
-		ProviderURL: os.Getenv("EMBED_PROVIDER_URL"),
-		APIKey:      os.Getenv("EMBED_API_KEY"),
+		ProviderURL: os.Getenv("LLM_URL"),
+		APIKey:      os.Getenv("LLM_API_KEY"),
+		FallbackURL: os.Getenv("LLM_FALLBACK_URL"),
+		FallbackKey: os.Getenv("LLM_FALLBACK_API_KEY"),
 	}
-	if models := splitCSV(os.Getenv("EMBED_MODEL")); len(models) > 0 {
+	if models := splitCSV(os.Getenv("LLM_MODEL")); len(models) > 0 {
 		cfg.Model = models[0]
 		cfg.Fallbacks = models[1:]
 	}
@@ -76,10 +82,13 @@ func splitCSV(s string) []string {
 // Validate rejects a call that has no provider or no model.
 func (c *Config) Validate() error {
 	if c.Model == "" {
-		return fmt.Errorf("set EMBED_MODEL")
+		return fmt.Errorf("set LLM_MODEL")
 	}
 	if c.ProviderURL == "" || c.APIKey == "" {
-		return fmt.Errorf("set EMBED_PROVIDER_URL and EMBED_API_KEY")
+		return fmt.Errorf("set LLM_URL and LLM_API_KEY")
+	}
+	if (c.FallbackURL == "") != (c.FallbackKey == "") {
+		return fmt.Errorf("set LLM_FALLBACK_URL and LLM_FALLBACK_API_KEY together")
 	}
 	return nil
 }

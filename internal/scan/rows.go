@@ -54,16 +54,16 @@ func FromReport(rep detect.Report, hash string) []Row {
 		}
 		antis := antiSet(lib.AntiFeatures)
 		if strings.EqualFold(lib.Type, "Mobile Analytics") || antis["Tracking"] {
-			note("no_tracking", label)
+			note("tracking", label)
 		}
 		if strings.EqualFold(lib.Type, "Advertisement") || antis["Ads"] {
-			note("no_ads", label)
+			note("ads", label)
 		}
 		if googlePlay(lib) {
-			note("no_google_services", "Google Play services: "+label)
+			note("google_services", "Google Play services: "+label)
 		}
 		if firebaseMessaging(lib) {
-			note("no_google_services", "Firebase Cloud Messaging: "+label)
+			note("google_services", "Firebase Cloud Messaging: "+label)
 		}
 	}
 	for _, fact := range libOrder {
@@ -75,23 +75,16 @@ func FromReport(rep detect.Report, hash string) []Row {
 	for _, row := range rows {
 		found[row.Fact] = true
 	}
-	// yes: neither Play services nor Firebase Cloud Messaging. Notes stay empty.
-	// no: one or both, and the notes name which.
-	// no_ads and no_tracking are no when a library is present, and left out otherwise.
-	// A no_google_services no also sets no_tracking to no, with empty notes when that is the only reason.
-	if !found["no_google_services"] {
-		add("no_google_services", "")
-	} else {
-		setValue(rows, "no_google_services", "no")
+	// google_services yes: Play services, Firebase Cloud Messaging, or both. Notes name which.
+	// no: neither. Notes stay empty.
+	// ads and tracking are yes when a library is present, and left out otherwise.
+	// A google_services yes also sets tracking to yes, with empty notes when that is the only reason.
+	if !found["google_services"] {
+		add("google_services", "")
+		setValue(rows, "google_services", "no")
 	}
-	if found["no_ads"] {
-		setValue(rows, "no_ads", "no")
-	}
-	if found["no_tracking"] {
-		setValue(rows, "no_tracking", "no")
-	} else if valueOf(rows, "no_google_services") == "no" {
-		add("no_tracking", "")
-		rows[len(rows)-1].Value = "no"
+	if !found["tracking"] && valueOf(rows, "google_services") == "yes" {
+		add("tracking", "")
 	}
 	if rep.Manifest {
 		grouped := map[string][]string{}
@@ -164,13 +157,13 @@ func firebaseMessaging(lib detect.Library) bool {
 func Reasons(rows []Row) []Row {
 	var out []Row
 	for _, row := range rows {
-		// A no means the libraries are present. The yes, for Google services, is their absence.
+		// A yes means the libraries are present. google_services no is their absence.
 		switch row.Fact {
-		case "no_google_services", "no_ads", "no_tracking":
-			if row.Value == "no" {
+		case "google_services", "ads", "tracking":
+			if row.Value == "yes" && strings.TrimSpace(row.Evidence) != "" {
 				out = append(out, row)
-				continue
 			}
+			continue
 		}
 		if row.Value != "yes" || !needsReason(row.Fact) {
 			continue

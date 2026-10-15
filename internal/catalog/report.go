@@ -19,6 +19,7 @@ type appReport struct {
 	fails    []string
 	debugDir string
 	live     bool
+	quiet    bool
 	begun    string
 	begunAt  time.Time
 }
@@ -155,6 +156,9 @@ func (r *appReport) String() string {
 
 func (r *appReport) flush() {
 	r.closeStep()
+	if r.quiet {
+		return
+	}
 	writeBlock(r.String())
 }
 
@@ -203,6 +207,7 @@ func planWords(w work) []string {
 	add(w.Clone, "clone")
 	add(w.Download, "apk")
 	add(w.Scan, "scan")
+	add(w.Icon, "icon")
 	add(w.About, "about")
 	add(w.Security, "security")
 	add(w.Vector, "vector")
@@ -214,6 +219,7 @@ func orWork(a, b work) work {
 		Clone:    a.Clone || b.Clone,
 		Download: a.Download || b.Download,
 		Scan:     a.Scan || b.Scan,
+		Icon:     a.Icon || b.Icon,
 		About:    a.About || b.About,
 		Security: a.Security || b.Security,
 		Vector:   a.Vector || b.Vector,

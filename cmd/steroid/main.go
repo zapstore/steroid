@@ -1,8 +1,16 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/zapstore/steroid/enrich"
+	"github.com/zapstore/steroid/internal/run"
 )
 
 // version is the build ref, set with -X main.version=...
@@ -13,26 +21,33 @@ func main() {
 		fmt.Println(version)
 		return
 	}
-	if len(os.Args) < 2 {
-		usage()
+	fs := flag.NewFlagSet("steroid", flag.ExitOnError)
+	debug := fs.Bool("debug", false, "log each step, and write prompt and response under data/debug/<app-id>")
+	force := fs.Bool("force", false, "delete the app row before enriching")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: steroid -v\n")
+		fmt.Fprintf(os.Stderr, "       steroid [--debug] [--force] app_id\n")
+	}
+	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
-	switch os.Args[1] {
-	case "enrich":
-		os.Exit(enrich(os.Args[2:]))
-	case "serve":
-		os.Exit(serve(os.Args[2:]))
-	case "bundle":
-		os.Exit(bundle(os.Args[2:]))
-	default:
-		usage()
+	if fs.NArg() != 1 {
+		fs.Usage()
 		os.Exit(2)
 	}
-}
-
-func usage() {
-	fmt.Fprintf(os.Stderr, "usage: steroid -v\n")
-	fmt.Fprintf(os.Stderr, "       steroid enrich --filter app_id [--debug] [--force]\n")
-	fmt.Fprintf(os.Stderr, "       steroid serve\n")
-	fmt.Fprintf(os.Stderr, "       steroid bundle [--filter app_id] [--no-enrich] [--debug]\n")
+	env, err := prepareEnv()
+	if err != nil {
+		slog.Error("enrich", "error", err)
+		os.Exit(1)
+	}
+	if _, err := run.ModelConfig(); err != nil {
+		env.log.Error("enrich", "error", err)
+		os.Exit(1)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := enrich.Matching(ctx, env.data, env.dbPath, env.model, fs.Arg(0), *debug, *force); err != nil {
+		env.log.Error("enrich", "error", err, "relay_db", env.dbPath, "data", env.data)
+		os.Exit(1)
+	}
 }

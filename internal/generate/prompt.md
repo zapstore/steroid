@@ -24,7 +24,9 @@ Reply once. One JSON object, no other text.
 {
   "about": "one paragraph",
   "security": "one paragraph",
-  "facts": "csv"
+  "facts": "csv",
+  "keywords": ["nip-05", "nostr"],
+  "queries": ["offline maps", "walking directions"]
 }
 ```
 
@@ -48,13 +50,13 @@ What the person can do, and the main reasons to install. Do not name the app. It
 
 `values` lists the only allowed values. They are not written in the file. Use `unknown` only when that column lists it, and only when there is no evidence for `yes` and none for `no`. Do not write `no` when `values` has no `no`. An `unknown` result is left out of the CSV.
 
-Do not change `no_google_services`. The scan sets it. If it left `notes` empty, fill them. Set `e2ee` and `open_source` from the listing and the source. Write the CSV. If `about` states a fact, the row states it too.
+Do not change `google_services`. The scan sets it. If it left `notes` empty, fill them. Set `e2ee` and `open_source` from the listing and the source. Write the CSV. If `about` states a fact, the row states it too.
 
 | fact | values | rule |
 | --- | --- | --- |
-| no_google_services | yes/no | Scan only. `no`: notes name Play services, Firebase Cloud Messaging, or both. Also set `no_tracking` to `no`. |
-| no_tracking | no/unknown | `no`: a library that can send data off the phone: analytics, identification, profiling, or a crash reporter. Or `no_google_services` is `no`. Notes name each library as a crash report or as usage, not both. Empty when Google services is the only reason. Otherwise leave the row out. |
-| no_ads | no/unknown | `no`: an ad library. Notes name each one. Otherwise leave the row out. |
+| google_services | yes/no | Scan only. `yes`: notes name Play services, Firebase Cloud Messaging, or both. Also set `tracking` to `yes`. `no`: neither. Notes empty. |
+| tracking | yes/unknown | `yes`: a library that can send data off the phone: analytics, identification, profiling, or a crash reporter. Or `google_services` is `yes`. Notes name each library as a crash report or as usage, not both. Empty when Google services is the only reason. Otherwise leave the row out. Do not write `no`. |
+| ads | yes/unknown | `yes`: an ad library. Notes name each one. Otherwise leave the row out. Do not write `no`. |
 | offline_capable | yes/no | No `INTERNET`: `yes`, notes `No INTERNET`. `INTERNET` is present, and the listing or source shows the main use works offline: `yes`, and notes say `INTERNET` is still there. Otherwise `no`, notes empty. |
 | e2ee | yes/unknown | `yes` only when the developer claims real end-to-end encryption and the source backs that. HTTPS, or a crypto library alone, is not `yes`. |
 | open_source | yes/no/unknown | `yes` when this message includes real source code and the listing license is free: MIT, BSD, ISC, Apache-2.0, MPL, LGPL, GPL, AGPL, Unlicense, or 0BSD. Notes are only that license code, such as `Apache-2.0`. `no` when there is no repository, the repository has no real code, or the license is missing or not one of those. `unknown` when the listing has a repository and the source was not read. Leave `unknown` out. |
@@ -86,14 +88,22 @@ Permission rows use the same CSV. Keep every row the scan included. Do not add o
 | device_admin | `BIND_DEVICE_ADMIN` |
 | vpn_service | `BIND_VPN_SERVICE` |
 
+### Keywords
+
+`keywords` is an array of at most 8 strings. Each is lowercase, one to three words, and uses only `a-z`, `0-9`, `-`, and space. A keyword is a protocol, standard, format, or other technical term. It must appear in the name, summary, description, repository README, or about. Do not use `app`, `android`, `free`, `open source`, `privacy`, or `secure`. Leave the array empty when there is none. The listing's tags are not keywords.
+
+### Likely queries
+
+`queries` is an array of 5 to 10 strings. Each line is lowercase, two to six words, and says what a person would type to find this kind of app. Do not use the app name. Do not name another product unless the listing text names that product.
+
 ### Security
 
 `security` is the consequence of the fact rows. Do not add a risk they do not support. Do not repeat the rows. Write permission ids as prose. Do not write "open source", FOSS, "FOSS variant", "standard build", variant, flavor, F-Droid, Obtainium, or the Play Store.
 
 | when | say |
 | --- | --- |
-| `no_tracking` or `no_ads` is `no`, and `offline_capable` is not `yes` | that library can send the data off the phone |
-| `no_tracking` or `no_ads` is `no`, and `offline_capable` is `yes` | the library sits next to the data on the phone |
+| `tracking` or `ads` is `yes`, and `offline_capable` is not `yes` | that library can send the data off the phone |
+| `tracking` or `ads` is `yes`, and `offline_capable` is `yes` | the library sits next to the data on the phone |
 | a permission note says there is no use | that access has no shown use |
 | a permission note shows the data leaves the phone | what leaves |
 | a permission note shows the data stays | that it stays on the phone |

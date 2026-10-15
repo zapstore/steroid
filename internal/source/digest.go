@@ -757,9 +757,9 @@ var factUses = map[string][]string{
 	"vpn_service":              {"vpnservice"},
 	"input_method":             {"inputmethodservice"},
 	"usage_stats":              {"usagestatsmanager"},
-	"no_tracking":              {"crashlytics", "mixpanel", "sentry", "firebaseanalytics"},
-	"no_ads":                   {"admob", "adview", "interstitialad"},
-	"no_google_services":       {"firebasemessaging", "firebase.messaging", "firebase_messaging", "googleapiclient", "play-services"},
+	"tracking":                 {"crashlytics", "mixpanel", "sentry", "firebaseanalytics"},
+	"ads":                      {"admob", "adview", "interstitialad"},
+	"google_services":          {"firebasemessaging", "firebase.messaging", "firebase_messaging", "googleapiclient", "play-services"},
 }
 
 // factActions are call sites. A mention of the permission name is a weaker quote.

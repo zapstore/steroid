@@ -57,9 +57,9 @@ func site(in Input) string {
 
 // Overview calls the LLM. summary is the about text.
 // note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, string, error) {
+func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, []string, []string, string, error) {
 	if err := cfg.Validate(); err != nil {
-		return "", "", nil, "", err
+		return "", "", nil, nil, nil, "", err
 	}
 	src := ""
 	if tree != nil {
@@ -70,7 +70,7 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, project)
 		if err == nil {
 			about, security, facts, err := finish(gen, rows, app, src, true)
-			return about, security, facts, llmNote("review", gen.ProviderModel), err
+			return about, security, facts, gen.Keywords, gen.Queries, llmNote("review", gen.ProviderModel), err
 		}
 		reviewErr = err
 	}
@@ -84,16 +84,16 @@ func Overview(ctx context.Context, cfg config.Config, client *http.Client, app g
 	})
 	if err != nil {
 		if reviewErr != nil {
-			return "", "", nil, "", fmt.Errorf("review: %v; assess: %w", reviewErr, err)
+			return "", "", nil, nil, nil, "", fmt.Errorf("review: %v; assess: %w", reviewErr, err)
 		}
-		return "", "", nil, "", err
+		return "", "", nil, nil, nil, "", err
 	}
 	note := llmNote("assess", gen.ProviderModel)
 	if reviewErr != nil {
 		note += " (review failed: " + strings.Join(strings.Fields(reviewErr.Error()), " ") + ")"
 	}
 	about, security, facts, err := finish(gen, rows, app, src, tree != nil)
-	return about, security, facts, note, err
+	return about, security, facts, gen.Keywords, gen.Queries, note, err
 }
 
 func llmNote(path, model string) string {
@@ -117,27 +117,43 @@ func finish(gen generate.Result, rows []scan.Row, app generate.App, extra string
 
 // ClosedFacts adds the yes/no rows every facts file must contain.
 // offline_capable is no when the scan did not find a phone with no INTERNET permission.
-// open_source is yes only when this run read source and the listing license is free.
+// A model yes for offline_capable or e2ee is kept only when this run sent source.
+// open_source is yes only when this run sent source and the listing license is free.
 // A repository that was not read is unknown, so that row is left out.
 func ClosedFacts(rows []scan.Row, app generate.App, source string, read bool) []scan.Row {
+	sent := strings.TrimSpace(source) != ""
+	if !sent {
+		rows = withoutUnbacked(rows, "offline_capable")
+		rows = withoutFact(rows, "e2ee")
+	}
 	if !hasFact(rows, "offline_capable") {
 		rows = append(rows, scan.Row{Fact: "offline_capable", Value: "no", Basis: "apk"})
 	}
-	if strings.TrimSpace(app.Repository) != "" && !read && strings.TrimSpace(source) == "" {
-		return withoutFact(rows, "open_source")
+	rows = withoutFact(rows, "open_source")
+	if strings.TrimSpace(app.Repository) != "" && !read && !sent {
+		return rows
 	}
-	if !hasFact(rows, "open_source") {
-		value := "no"
-		var reason string
-		if strings.TrimSpace(source) != "" {
-			if code, ok := freeLicense(app.License); ok {
-				value = "yes"
-				reason = code
-			}
+	value := "no"
+	var reason string
+	if sent {
+		if code, ok := freeLicense(app.License); ok {
+			value = "yes"
+			reason = code
 		}
-		rows = append(rows, scan.Row{Fact: "open_source", Value: value, Basis: "listing", Reason: reason})
 	}
-	return rows
+	return append(rows, scan.Row{Fact: "open_source", Value: value, Basis: "listing", Reason: reason})
+}
+
+// withoutUnbacked drops a model claim. A scanner row, basis apk, stays.
+func withoutUnbacked(rows []scan.Row, fact string) []scan.Row {
+	out := make([]scan.Row, 0, len(rows))
+	for _, row := range rows {
+		if row.Fact == fact && row.Basis != "apk" {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func hasFact(rows []scan.Row, fact string) bool {
@@ -204,10 +220,10 @@ func cleanReason(text string) string {
 
 func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 	for i, row := range rows {
-		if row.Value != "yes" && row.Fact != "no_ads" && row.Fact != "no_tracking" && row.Fact != "no_google_services" {
+		if row.Value != "yes" {
 			continue
 		}
-		if row.Fact == "no_tracking" && row.Basis == "apk" && strings.TrimSpace(row.Evidence) == "" {
+		if row.Fact == "tracking" && row.Basis == "apk" && strings.TrimSpace(row.Evidence) == "" {
 			continue
 		}
 		text := cleanReason(strings.Join(strings.Fields(reason[row.Fact]), " "))
@@ -233,11 +249,11 @@ func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 	add("e2ee", facts.E2EE)
 	add("offline_capable", facts.OfflineCapable)
 	add("open_source", facts.OpenSource)
-	if facts.NoAds == "no" {
-		add("no_ads", "no")
+	if facts.Ads == "yes" {
+		add("ads", "yes")
 	}
-	if facts.NoTracking == "no" {
-		add("no_tracking", "no")
+	if facts.Tracking == "yes" {
+		add("tracking", "yes")
 	}
 	return rows
 }

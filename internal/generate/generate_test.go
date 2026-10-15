@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -109,7 +110,7 @@ func TestRunSummary(t *testing.T) {
 		inner, err := json.Marshal(map[string]string{
 			"about":    "Zapstore is an open Android app store.",
 			"security": "It installs packages.",
-			"facts":    "\"fact\",\"value\",\"notes\"\n\"no_ads\",\"no\",\"AdMob\"\n",
+			"facts":    "\"fact\",\"value\",\"notes\"\n\"ads\",\"yes\",\"AdMob\"\n",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +136,7 @@ func TestRunSummary(t *testing.T) {
 	if !strings.Contains(got.Summary, "Zapstore is an open Android app store.") || strings.Contains(got.Summary, "No ads") {
 		t.Fatalf("got %q", got.Summary)
 	}
-	if got.Facts.NoAds != "no" {
+	if got.Facts.Ads != "yes" {
 		t.Fatalf("facts %+v", got.Facts)
 	}
 	if got.ProviderModel != "test-model" {
@@ -159,6 +160,112 @@ func TestRunSummaryFencedJSON(t *testing.T) {
 	}
 	if !strings.Contains(got.Summary, "A store.") {
 		t.Fatalf("got %q", got.Summary)
+	}
+}
+
+func TestChatFallsBackWhenPrimaryIsDown(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer primary" {
+			t.Errorf("primary auth %s", r.Header.Get("Authorization"))
+		}
+		http.Error(w, "unavailable", http.StatusBadGateway)
+	}))
+	t.Cleanup(primary.Close)
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer nano" {
+			t.Errorf("fallback auth %s", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
+	}))
+	t.Cleanup(fallback.Close)
+	dir := t.TempDir()
+	sink, err := debug.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := debug.With(t.Context(), sink)
+	content, err := Chat(ctx, config.Config{
+		ProviderURL: primary.URL,
+		APIKey:      "primary",
+		FallbackURL: fallback.URL,
+		FallbackKey: "nano",
+		Model:       "m",
+	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "A map.") {
+		t.Fatalf("%s", content)
+	}
+	note, err := os.ReadFile(filepath.Join(dir, "fallback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(note), "HTTP 502") || strings.Contains(string(note), "nano") {
+		t.Fatalf("%s", note)
+	}
+}
+
+func TestChatKeepsPrimaryOnBadRequest(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusBadRequest)
+	}))
+	t.Cleanup(primary.Close)
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("fallback called")
+		http.Error(w, "no", http.StatusOK)
+	}))
+	t.Cleanup(fallback.Close)
+	_, err := Chat(t.Context(), config.Config{
+		ProviderURL: primary.URL,
+		APIKey:      "primary",
+		FallbackURL: fallback.URL,
+		FallbackKey: "nano",
+		Model:       "m",
+	}, primary.Client(), "m", []Message{{Role: "user", Content: "hi"}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
+		t.Fatal(err)
+	}
+}
+
+func TestChatFallsBackWhenPrimaryRefuses(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
+	}))
+	t.Cleanup(fallback.Close)
+	content, err := Chat(t.Context(), config.Config{
+		ProviderURL: primary.URL,
+		APIKey:      "primary",
+		FallbackURL: fallback.URL,
+		FallbackKey: "nano",
+		Model:       "m",
+	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "A map.") {
+		t.Fatalf("%s", content)
+	}
+}
+
+func TestChatDoesNotFallBackAfterCancel(t *testing.T) {
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("fallback called")
+	}))
+	t.Cleanup(fallback.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := Chat(ctx, config.Config{
+		ProviderURL: "http://127.0.0.1:1",
+		APIKey:      "primary",
+		FallbackURL: fallback.URL,
+		FallbackKey: "nano",
+		Model:       "m",
+	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
+	if err == nil {
+		t.Fatal("expected cancel")
 	}
 }
 

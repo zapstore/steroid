@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -39,15 +41,19 @@ type Result struct {
 	Facts         Facts             `json:"facts,omitempty"`
 	Reason        map[string]string `json:"reason,omitempty"`
 	Warnings      []Warning         `json:"warnings,omitempty"`
+	Keywords      []string          `json:"keywords,omitempty"`
+	Queries       []string          `json:"queries,omitempty"`
 	ProviderModel string            `json:"provider_model,omitempty"`
 }
 
 // modelReply is the JSON object the prompt asks for.
 // facts is a quoted CSV, or the no-change sentinel.
 type modelReply struct {
-	About    string `json:"about"`
-	Security string `json:"security"`
-	Facts    string `json:"facts"`
+	About    string   `json:"about"`
+	Security string   `json:"security"`
+	Facts    string   `json:"facts"`
+	Keywords []string `json:"keywords"`
+	Queries  []string `json:"queries"`
 }
 
 // App is the listing text passed to the model. It is untrusted.
@@ -92,6 +98,8 @@ func Run(ctx context.Context, cfg config.Config, client *http.Client, in Input) 
 		Warnings:      notes.Warnings,
 		Facts:         notes.Facts,
 		Reason:        notes.Reason,
+		Keywords:      notes.Keywords,
+		Queries:       notes.Queries,
 		ProviderModel: notes.ProviderModel,
 	}, nil
 }
@@ -104,6 +112,8 @@ type Notes struct {
 	Facts         Facts
 	Reason        map[string]string
 	Warnings      []Warning
+	Keywords      []string
+	Queries       []string
 	ProviderModel string
 }
 
@@ -121,7 +131,7 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 		if model == "" {
 			continue
 		}
-		aboutText, securityText, factsText, err := Turn(ctx, cfg, client, model, Record(app, sheet, source, about, security), about, security)
+		aboutText, securityText, factsText, keywords, queries, err := Turn(ctx, cfg, client, model, Record(app, sheet, source, about, security), about, security)
 		if err != nil {
 			last = fmt.Errorf("%s: %w", model, err)
 			continue
@@ -131,6 +141,8 @@ func Assess(ctx context.Context, cfg config.Config, client *http.Client, app App
 			last = fmt.Errorf("%s: %w", model, err)
 			continue
 		}
+		notes.Keywords = keywords
+		notes.Queries = queries
 		notes.ProviderModel = model
 		return notes, nil
 	}
@@ -223,17 +235,17 @@ func writeListing(b *strings.Builder, app App) {
 }
 
 // Turn asks for the overview. A no-change reply for a missing summary is sent back once.
-func Turn(ctx context.Context, cfg config.Config, client *http.Client, model, user, prevAbout, prevSecurity string) (string, string, string, error) {
+func Turn(ctx context.Context, cfg config.Config, client *http.Client, model, user, prevAbout, prevSecurity string) (string, string, string, []string, []string, error) {
 	var out modelReply
 	if err := complete(ctx, cfg, client, model, Prompt, user, &out); err != nil {
-		return "", "", "", err
+		return "", "", "", nil, nil, err
 	}
 	if !missingText(out.About, prevAbout) && !missingText(out.Security, prevSecurity) {
-		return out.About, out.Security, out.Facts, nil
+		return out.About, out.Security, out.Facts, out.Keywords, out.Queries, nil
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, nil, err
 	}
 	var again modelReply
 	if _, err := Chat(ctx, cfg, client, model, []Message{
@@ -242,15 +254,15 @@ func Turn(ctx context.Context, cfg config.Config, client *http.Client, model, us
 		{Role: "assistant", Content: string(raw)},
 		{Role: "user", Content: rewriteAsk(out.About, out.Security, prevAbout, prevSecurity)},
 	}, &again); err != nil {
-		return "", "", "", err
+		return "", "", "", nil, nil, err
 	}
 	if missingText(again.About, prevAbout) {
-		return "", "", "", fmt.Errorf("about no-change with no stored text")
+		return "", "", "", nil, nil, fmt.Errorf("about no-change with no stored text")
 	}
 	if missingText(again.Security, prevSecurity) {
-		return "", "", "", fmt.Errorf("security no-change with no stored text")
+		return "", "", "", nil, nil, fmt.Errorf("security no-change with no stored text")
 	}
-	return again.About, again.Security, again.Facts, nil
+	return again.About, again.Security, again.Facts, again.Keywords, again.Queries, nil
 }
 
 func missingText(got, prev string) bool {
@@ -359,12 +371,12 @@ func ParseSheet(raw string) (Facts, map[string]string, bool, error) {
 
 func setFact(f *Facts, fact, value string) {
 	switch fact {
-	case "no_google_services":
-		f.NoGoogleServices = value
-	case "no_ads":
-		f.NoAds = value
-	case "no_tracking":
-		f.NoTracking = value
+	case "google_services":
+		f.GoogleServices = value
+	case "ads":
+		f.Ads = value
+	case "tracking":
+		f.Tracking = value
 	case "offline_capable":
 		f.OfflineCapable = value
 	case "e2ee":
@@ -435,18 +447,60 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 			"enabled": false,
 		},
 	}
-	ctx, cancel := context.WithTimeout(ctx, completeTimeout)
-	defer cancel()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.CompletionsURL(cfg.ProviderURL), bytes.NewReader(body))
+	content, err := post(ctx, client, cfg.ProviderURL, cfg.APIKey, model, body, dest, dbg)
+	if err == nil || cfg.FallbackURL == "" || ctx.Err() != nil || !providerDown(err) {
+		return content, err
+	}
+	dbg.Write("fallback", err.Error()+"\n")
+	content, ferr := post(ctx, client, cfg.FallbackURL, cfg.FallbackKey, model, body, dest, dbg)
+	if ferr != nil {
+		return "", fmt.Errorf("fallback: %w (primary: %v)", ferr, err)
+	}
+	return content, nil
+}
+
+// statusError is an HTTP response from the provider. Codes at 500 and above
+// mean the provider is down; other codes are the request or the model.
+type statusError struct {
+	model string
+	code  int
+	body  string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d: %s", e.model, e.code, e.body)
+}
+
+// providerDown reports a failure that means this provider cannot serve the call.
+// A bad model reply stays on the primary so the next model is tried there.
+func providerDown(err error) bool {
+	var status *statusError
+	if errors.As(err, &status) {
+		return status.code >= 500
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
+func post(ctx context.Context, client *http.Client, root, key, model string, body []byte, dest any, dbg *debug.Sink) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, completeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.CompletionsURL(root), bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	req.Header.Set("Authorization", "Bearer "+key)
 	res, err := client.Do(req)
 	if err != nil {
 		dbg.Write("response.json", err.Error()+"\n")
@@ -460,7 +514,7 @@ func chat(ctx context.Context, cfg config.Config, client *http.Client, model str
 	}
 	dbg.Write("response.json", string(raw))
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: HTTP %d: %s", model, res.StatusCode, clip(string(raw)))
+		return "", &statusError{model: model, code: res.StatusCode, body: clip(string(raw))}
 	}
 	var envelope struct {
 		Choices []struct {

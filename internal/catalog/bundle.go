@@ -4,130 +4,99 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
+	"github.com/zapstore/relay/pkg/catalog"
 	"github.com/zapstore/relay/pkg/events"
+	"github.com/zapstore/steroid/artifacts"
 	"github.com/zapstore/steroid/internal/picture"
 	"github.com/zapstore/steroid/internal/run"
 )
 
-// parallelJobs is how many listings a bundle enriches at once.
+// Listing is the resolved app the relay would seal.
+type Listing = catalog.Listing
+
+// parallelJobs is how many listings enrich at once.
 const parallelJobs = 4
+
+const preferredABI = "android-arm64-v8a"
 
 // avatarMu keeps two listings by the same author from writing one avatar at once.
 var avatarMu sync.Mutex
 
-// Bundle reads the relay database and publishes the next snapshot.
-// It enriches changed listings unless skipEnrich is set.
-// filter is a substring of the app ID. An empty filter selects every changed listing.
-// A non-empty filter enriches those listings only and writes a diff of only those apps.
-// The snapshot still contains the full catalog.
-// With skipEnrich, profile avatars are left as they are, and artifact files are included only when the app cache apk matches the listing asset hash.
-func Bundle(ctx context.Context, data, dbPath, modelDir string, signer Signer, filter string, skipEnrich, debug bool) (int64, error) {
-	writeBlock("load relay")
-	raw, err := LoadEvents(ctx, dbPath, signer.PubKey)
-	if err != nil {
-		return 0, err
-	}
-	next := Resolve(raw, signer.PubKey)
-	latest, err := LatestSnap(data)
-	if err != nil {
-		return 0, err
-	}
-	var prev State
-	if latest > 0 {
-		prev, err = ReadSnap(SnapPath(data, latest), signer.PubKey)
-		if err != nil {
-			return 0, err
-		}
-	}
-	changed := map[string]struct{}{}
-	if latest == 0 {
-		for _, listing := range next.Listings {
-			changed[listing.AppID] = struct{}{}
-		}
-	} else {
-		for _, id := range Compare(prev, next).Apps {
-			changed[id] = struct{}{}
-		}
-	}
-	var work []Listing
-	for _, listing := range next.Listings {
-		if filter != "" {
-			if strings.Contains(listing.AppID, filter) {
-				work = append(work, listing)
-			}
-			continue
-		}
-		if _, ok := changed[listing.AppID]; ok {
-			work = append(work, listing)
-		}
-	}
-	if filter != "" && len(work) == 0 {
-		return 0, fmt.Errorf("no listings match %q", filter)
-	}
-	enriching := strconv.Itoa(len(work))
-	if skipEnrich {
-		enriching = "skip"
-	}
-	writeBlock(runLine(len(next.Listings), enriching, filter, latest))
-	if !skipEnrich {
-		if err := enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug); err != nil {
-			return 0, err
-		}
-	}
-	return Publish(ctx, data, next, signer, time.Now().Unix(), filter, skipEnrich)
-}
-
-// EnrichMatching enriches listings whose app ID contains filter. It does not publish.
+// EnrichMatching enriches listings whose app id contains filter.
+// It reads those listings from the relay database. It does not write a snapshot or a bundle.
 func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, debug, force bool) error {
-	if strings.TrimSpace(filter) == "" {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
 		return fmt.Errorf("filter is empty")
 	}
-	raw, err := LoadEvents(ctx, dbPath, "")
+	listings, pictures, err := catalog.Apps(ctx, dbPath, filter)
 	if err != nil {
 		return err
 	}
-	next := Resolve(raw, "")
-	var work []Listing
-	for _, listing := range next.Listings {
-		if strings.Contains(listing.AppID, filter) {
+	if len(listings) == 0 {
+		return fmt.Errorf("no listings match %q", filter)
+	}
+	if force {
+		db, err := artifacts.Open(ctx, artifacts.Path(data))
+		if err != nil {
+			return err
+		}
+		for _, listing := range listings {
+			if err := db.Delete(ctx, listing.AppID); err != nil {
+				db.Close()
+				return err
+			}
+		}
+		if err := db.Close(); err != nil {
+			return err
+		}
+	}
+	writeBlock(enrichLine(len(listings), filter, force))
+	return enrichWork(ctx, data, modelDir, listings, pictures, debug)
+}
+
+// EnrichIDs enriches the listings whose app id is in ids.
+// An id with no listing is skipped. An empty ids list does nothing.
+// It does not write a snapshot or a bundle.
+func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			want[id] = struct{}{}
+		}
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	listings, pictures, err := catalog.Apps(ctx, dbPath, "")
+	if err != nil {
+		return err
+	}
+	work := make([]Listing, 0, len(want))
+	for _, listing := range listings {
+		if _, ok := want[listing.AppID]; ok {
 			work = append(work, listing)
 		}
 	}
 	if len(work) == 0 {
-		return fmt.Errorf("no listings match %q", filter)
+		return nil
 	}
-	if force {
-		for _, listing := range work {
-			if err := removeAppDir(data, listing.AppID); err != nil {
-				return err
-			}
-		}
-	}
-	writeBlock(enrichLine(len(work), len(next.Listings), filter, force))
-	return enrichWork(ctx, data, modelDir, work, picturesByPubkey(next.Profiles), debug)
+	writeBlock(enrichLine(len(work), "", false))
+	return enrichWork(ctx, data, modelDir, work, pictures, false)
 }
 
-func runLine(listings int, enriching, filter string, from int64) string {
-	s := fmt.Sprintf("bundle %d listings, enrich %s, from %d", listings, enriching, from)
-	if f := strings.TrimSpace(filter); f != "" {
-		s += ", filter " + f
-	}
-	return s
-}
-
-func enrichLine(matched, listings int, filter string, force bool) string {
-	s := fmt.Sprintf("enrich %d/%d", matched, listings)
+func enrichLine(n int, filter string, force bool) string {
+	s := fmt.Sprintf("enrich %d", n)
 	if f := strings.TrimSpace(filter); f != "" {
 		s += ", filter " + f
 	}
@@ -138,14 +107,15 @@ func enrichLine(matched, listings int, filter string, force bool) string {
 }
 
 func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures map[string]string, debug bool) error {
-	cfg, err := run.ModelConfig()
+	db, err := artifacts.Open(ctx, artifacts.Path(data))
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 	client := &http.Client{Timeout: 2 * time.Minute}
 	var failed atomic.Int32
 	err = processListings(ctx, work, parallelJobs, func(ctx context.Context, _ int, listing Listing) error {
-		bad, err := Enrich(ctx, data, modelDir, listing, pictures[listing.App.PubKey], cfg, client, debug)
+		bad, err := Enrich(ctx, db, data, modelDir, listing, pictures[listing.App.PubKey], client, debug)
 		if bad || err != nil {
 			failed.Add(1)
 		}
@@ -226,29 +196,18 @@ func processListings(ctx context.Context, work []Listing, limit int, fn func(con
 	return ctx.Err()
 }
 
-func picturesByPubkey(profiles []Profile) map[string]string {
-	out := make(map[string]string, len(profiles))
-	for _, profile := range profiles {
-		if profile.Pubkey != "" && profile.Picture != "" {
-			out[profile.Pubkey] = profile.Picture
-		}
-	}
-	return out
-}
-
-// storeAvatar writes <pubkey>.webp from a kind 0 picture URL.
-// wrote is false when the URL is empty or the current file already matches it.
-func storeAvatar(ctx context.Context, data, pubkey, pictureURL string) (bool, error) {
+// storeAvatar writes a publisher picture from a kind 0 picture URL.
+// wrote is false when the URL is empty or the stored picture already matches it.
+func storeAvatar(ctx context.Context, db *artifacts.DB, pubkey, pictureURL string) (bool, error) {
 	pictureURL = strings.TrimSpace(pictureURL)
 	pubkey = strings.TrimSpace(pubkey)
 	if pictureURL == "" || pubkey == "" {
 		return false, nil
 	}
-	name, err := avatarFilename(pubkey)
-	if err != nil {
+	if _, err := avatarFilename(pubkey); err != nil {
 		return false, err
 	}
-	if avatarCurrent(data, pubkey, name, pictureURL) {
+	if avatarCurrent(ctx, db, pubkey, pictureURL) {
 		return false, nil
 	}
 	raw, err := picture.Fetch(ctx, pictureURL)
@@ -261,40 +220,18 @@ func storeAvatar(ctx context.Context, data, pubkey, pictureURL string) (bool, er
 	}
 	avatarMu.Lock()
 	defer avatarMu.Unlock()
-	if avatarCurrent(data, pubkey, name, pictureURL) {
+	if avatarCurrent(ctx, db, pubkey, pictureURL) {
 		return false, nil
 	}
-	if err := saveAvatar(data, pubkey, encoded); err != nil {
-		return false, err
-	}
-	side := filepath.Join(ArtifactDir(data), pubkey+".url")
-	if err := os.WriteFile(side, []byte(pictureURL), 0o644); err != nil {
+	if err := db.SetAvatar(ctx, pubkey, pictureURL, encoded); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func avatarCurrent(data, pubkey, name, pictureURL string) bool {
-	side := filepath.Join(ArtifactDir(data), pubkey+".url")
-	stored, _ := os.ReadFile(side)
-	webp := filepath.Join(ArtifactDir(data), name)
-	info, err := os.Stat(webp)
-	return err == nil && info.Size() > 0 && strings.TrimSpace(string(stored)) == pictureURL
-}
-
-func saveAvatar(data, pubkey string, webp []byte) error {
-	if len(webp) == 0 {
-		return nil
-	}
-	name, err := avatarFilename(pubkey)
-	if err != nil {
-		return err
-	}
-	dir := ArtifactDir(data)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, name), webp, 0o644)
+func avatarCurrent(ctx context.Context, db *artifacts.DB, pubkey, pictureURL string) bool {
+	avatar, ok, err := db.Avatar(ctx, pubkey)
+	return err == nil && ok && strings.TrimSpace(avatar.Picture) == pictureURL
 }
 
 // ListingInput is the steroid request for one current listing.
@@ -321,11 +258,11 @@ func ListingInput(listing Listing, cacheDir string) (run.Input, events.App, erro
 	if rel, err := events.ParseRelease(&listing.Release); err == nil {
 		in.Version = rel.Version
 	}
-	in.URL, in.APKHash = apkOf(listing)
+	in.URL, in.APKHash, in.Commit = apkOf(listing)
 	return in, app, nil
 }
 
-func apkOf(listing Listing) (url, hash string) {
+func apkOf(listing Listing) (url, hash, commit string) {
 	var fallback events.Asset
 	var have bool
 	for _, asset := range listing.Assets {
@@ -338,7 +275,7 @@ func apkOf(listing Listing) (url, hash string) {
 		}
 		for _, platform := range parsed.Platforms {
 			if platform == preferredABI && parsed.URL != "" && parsed.Hash != "" {
-				return parsed.URL, parsed.Hash
+				return parsed.URL, parsed.Hash, parsed.Commit
 			}
 		}
 		if !have {
@@ -347,115 +284,7 @@ func apkOf(listing Listing) (url, hash string) {
 		}
 	}
 	if !have {
-		return "", ""
+		return "", "", ""
 	}
-	return fallback.URL, fallback.Hash
-}
-
-// BuildBundle writes a client bundle for from→to. Artifact bytes are the latest files.
-// about, vector, and icon.webp ship only when the diff has that app's kind 32267 event.
-// security ships only when the diff has that app's kind 3063 event.
-// The client keeps the stored file for a missing member.
-func BuildBundle(ctx context.Context, data string, from, to, bundledAt int64, diff Diff, signer Signer) ([]byte, error) {
-	raw, err := MarshalDiff(diff)
-	if err != nil {
-		return nil, err
-	}
-	var members []member
-	if len(raw) > 0 {
-		members = append(members, member{Name: "diff.jsonl", Data: raw})
-	}
-	listing, asset := enrichmentApps(diff.Events)
-	ids := enrichmentIDs(listing, asset, diff.Apps)
-	for _, appID := range ids {
-		if appID == "" || strings.Contains(appID, "/") || strings.Contains(appID, "..") {
-			return nil, fmt.Errorf("app id %q", appID)
-		}
-		dir := AppDir(data, appID)
-		for _, name := range enrichmentFiles(appID, listing, asset) {
-			body, err := os.ReadFile(filepath.Join(dir, name))
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return nil, err
-			}
-			if len(body) == 0 {
-				continue
-			}
-			memberName := filepath.ToSlash(filepath.Join(appID, name))
-			members = append(members, member{Name: memberName, Data: body})
-		}
-	}
-	for _, name := range diff.Avatars {
-		if !isAvatarFilename(name) {
-			return nil, fmt.Errorf("avatar name %q", name)
-		}
-		body, err := os.ReadFile(filepath.Join(ArtifactDir(data), name))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		members = append(members, member{Name: name, Data: body})
-	}
-	return pack(ctx, members, from, to, bundledAt, &signer)
-}
-
-// enrichmentApps is the app ids whose kind 32267 or kind 3063 event is in the diff.
-func enrichmentApps(list []nostr.Event) (listing, asset map[string]struct{}) {
-	listing = map[string]struct{}{}
-	asset = map[string]struct{}{}
-	for _, event := range list {
-		switch event.Kind {
-		case events.KindApp:
-			if id, ok := events.Find(event.Tags, "d"); ok && id != "" {
-				listing[id] = struct{}{}
-			}
-		case events.KindAsset:
-			if id, ok := events.Find(event.Tags, "i"); ok && id != "" {
-				asset[id] = struct{}{}
-			}
-		}
-	}
-	return listing, asset
-}
-
-func enrichmentIDs(listing, asset map[string]struct{}, allowed []string) []string {
-	okID := map[string]struct{}{}
-	for _, id := range allowed {
-		okID[id] = struct{}{}
-	}
-	seen := map[string]struct{}{}
-	var ids []string
-	for id := range listing {
-		if _, ok := okID[id]; !ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	for id := range asset {
-		if _, ok := okID[id]; !ok {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	return ids
-}
-
-func enrichmentFiles(appID string, listing, asset map[string]struct{}) []string {
-	var names []string
-	if _, ok := listing[appID]; ok {
-		names = append(names, "about", "vector", "icon.webp")
-	}
-	if _, ok := asset[appID]; ok {
-		names = append(names, "security")
-	}
-	return names
+	return fallback.URL, fallback.Hash, fallback.Commit
 }
