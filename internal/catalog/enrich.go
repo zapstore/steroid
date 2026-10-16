@@ -302,6 +302,7 @@ func Enrich(ctx context.Context, db *artifacts.DB, data, modelDir string, listin
 	}
 	writeSecurity := w.Security && !rep.failedStage("security")
 	writeFacts := len(rows) > 0 && (factsHash != m.Facts || !hasFacts || w.Security)
+	securityBody := stored.Security
 	if writeSecurity || writeFacts || !sameWords(kws, prevKeywords) {
 		rep.step("security")
 		var sheet string
@@ -322,6 +323,7 @@ func Enrich(ctx context.Context, db *artifacts.DB, data, modelDir string, listin
 			rep.fail("security", errors.New("empty"))
 		} else {
 			body := securityFile(full, permissionLine(project, rows, prevPerms), security, kws)
+			securityBody = body
 			if strings.TrimSpace(body) != strings.TrimSpace(stored.Security) {
 				if err := db.SetSecurity(ctx, listing.AppID, body); err != nil {
 					rep.fail("security", err)
@@ -330,6 +332,17 @@ func Enrich(ctx context.Context, db *artifacts.DB, data, modelDir string, listin
 			}
 			if writeSecurity {
 				rep.mark("security")
+			}
+		}
+	}
+	// A repository that cannot be read is closed source. The listing license
+	// does not keep it open when the remote refuses the lookup.
+	if rep.failedStage("repository") || rep.failedStage("clone") {
+		closed := markClosedSource(securityBody)
+		if strings.TrimSpace(closed) != strings.TrimSpace(securityBody) {
+			if err := db.SetSecurity(ctx, listing.AppID, closed); err != nil {
+				rep.fail("security", err)
+				return true, err
 			}
 		}
 	}

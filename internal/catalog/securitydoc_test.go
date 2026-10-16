@@ -72,6 +72,34 @@ func TestOldSecurityFileStillReads(t *testing.T) {
 	}
 }
 
+func TestMarkClosedSource(t *testing.T) {
+	body := securityFile("\"google_services\",\"no\"\n\"open_source\",\"yes\",\"MIT\"\n", "INTERNET", "Reads the network.", nil)
+	got := markClosedSource(body)
+	var doc securityJSON
+	if err := json.Unmarshal([]byte(got), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Facts["open_source"] || doc.Facts["google_services"] {
+		t.Fatalf("facts %#v", doc.Facts)
+	}
+	if _, ok := doc.Facts["open_source"]; !ok {
+		t.Fatal("open_source missing")
+	}
+	if doc.Body != "Reads the network." || strings.Join(doc.Permissions, ",") != "INTERNET" {
+		t.Fatalf("body %q perms %v", doc.Body, doc.Permissions)
+	}
+	if markClosedSource(got) != got {
+		t.Fatal("closed text was rewritten")
+	}
+	empty := markClosedSource("")
+	if err := json.Unmarshal([]byte(empty), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Facts["open_source"]; !ok || doc.Facts["open_source"] {
+		t.Fatalf("empty facts %#v", doc.Facts)
+	}
+}
+
 func TestAcceptKeywords(t *testing.T) {
 	corpus := "Nostr client for zaps and NIP-05 names"
 	got := acceptKeywords([]string{"Nostr", "nip-05", "Zaps", "app", "android", "privacy", "zapstore", "open source", "not-in-text"}, corpus)

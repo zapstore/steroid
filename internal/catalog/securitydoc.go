@@ -276,6 +276,31 @@ func proseOf(doc securityJSON) string {
 	return notice + "\n\n" + body
 }
 
+// markClosedSource sets open_source to no and keeps the other facts.
+// Text that is already closed is returned unchanged.
+func markClosedSource(text string) string {
+	csv, perms, prose, keywords := storedParts(text)
+	if strings.Contains(csv, `"open_source","no"`) {
+		return text
+	}
+	recs, err := scan.Records(csv)
+	var rows []scan.Row
+	if err == nil {
+		for _, rec := range recs {
+			if len(rec) < 2 || strings.TrimSpace(rec[0]) == "open_source" {
+				continue
+			}
+			row := scan.Row{Fact: strings.TrimSpace(rec[0]), Value: strings.TrimSpace(rec[1])}
+			if len(rec) > 2 {
+				row.Reason = strings.TrimSpace(rec[2])
+			}
+			rows = append(rows, row)
+		}
+	}
+	rows = append(rows, scan.Row{Fact: "open_source", Value: "no"})
+	return securityFile(string(scan.CSV(rows)), perms, prose, keywords)
+}
+
 // factsReady is security text whose facts already include the rows every app must keep.
 func factsReady(text string) bool {
 	csv, _, _, _, ok := partsOf(text)
