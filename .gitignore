@@ -6,3 +6,5 @@ dist/
 testdata/
 .env
 SPEC.md
+
+.DS_Store
