@@ -19,6 +19,12 @@ func IDs(ctx context.Context, data, dbPath string, ids []string) error {
 	return catalog.EnrichIDs(ctx, data, dbPath, modelDir(), ids)
 }
 
+// Filter enriches listings whose app id contains filter.
+// A cache that already matches the listing does nothing.
+func Filter(ctx context.Context, data, dbPath, filter string) error {
+	return catalog.EnrichMatching(ctx, data, dbPath, modelDir(), filter, false, false)
+}
+
 func modelDir() string {
 	if dir := strings.TrimSpace(os.Getenv("LEAF_MODEL_DIR")); dir != "" {
 		return dir
