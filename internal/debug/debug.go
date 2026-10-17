@@ -64,6 +64,25 @@ func (s *Sink) Write(name, body string) {
 	_ = os.WriteFile(filepath.Join(s.dir, name), []byte(body), 0o644)
 }
 
+// Append adds body to the end of name. A nil sink does nothing.
+func (s *Sink) Append(name, body string) {
+	if s == nil {
+		return
+	}
+	name = safeName(name)
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := os.OpenFile(filepath.Join(s.dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString(body)
+	_ = f.Close()
+}
+
 func safeName(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	return strings.Map(func(r rune) rune {

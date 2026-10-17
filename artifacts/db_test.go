@@ -3,6 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 func TestRoundTrip(t *testing.T) {
@@ -49,6 +50,25 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if app.About != "A wallet.\n" {
 		t.Fatalf("empty about cleared the row: %q", app.About)
+	}
+}
+
+func TestIDs(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+	ids, err := db.IDs(ctx)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("ids %v err %v", ids, err)
+	}
+	if err := db.SetAbout(ctx, "com.b", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetAbout(ctx, "com.a", "a"); err != nil {
+		t.Fatal(err)
+	}
+	ids, err = db.IDs(ctx)
+	if err != nil || len(ids) != 2 || ids[0] != "com.a" || ids[1] != "com.b" {
+		t.Fatalf("ids %v err %v", ids, err)
 	}
 }
 
@@ -108,4 +128,28 @@ func openTest(t *testing.T) *DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func TestCacheExpiresAndPrunes(t *testing.T) {
+	db, err := Open(t.Context(), Path(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.CachePut(t.Context(), "llm", "k", []byte("v")); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := db.CacheGet(t.Context(), "llm", "k", time.Hour)
+	if err != nil || !ok || string(got) != "v" {
+		t.Fatalf("%q %v %v", got, ok, err)
+	}
+	if _, ok, _ := db.CacheGet(t.Context(), "site", "k", 0); ok {
+		t.Fatal("kind leaked")
+	}
+	if err := db.CachePrune(t.Context(), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := db.CacheGet(t.Context(), "llm", "k", 0); ok {
+		t.Fatal("not pruned")
+	}
 }

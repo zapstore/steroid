@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -32,6 +33,13 @@ CREATE TABLE IF NOT EXISTS avatar (
   pubkey TEXT PRIMARY KEY,
   picture TEXT NOT NULL DEFAULT '',
   webp BLOB
+);
+CREATE TABLE IF NOT EXISTS cache (
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value BLOB NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (kind, key)
 );
 `
 
@@ -121,6 +129,24 @@ func prepare(ctx context.Context, db *sql.DB) error {
 
 func (db *DB) Close() error {
 	return db.sql.Close()
+}
+
+// IDs returns every app id, ascending.
+func (db *DB) IDs(ctx context.Context) ([]string, error) {
+	rows, err := db.sql.QueryContext(ctx, `SELECT id FROM app ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // Load reads one app. Present is false when it has no row.
@@ -244,6 +270,39 @@ func (db *DB) SetAvatar(ctx context.Context, pubkey, picture string, webp []byte
 		INSERT INTO avatar (pubkey, picture, webp) VALUES (?, ?, ?)
 		ON CONFLICT(pubkey) DO UPDATE SET picture = excluded.picture, webp = excluded.webp`,
 		pubkey, picture, webp)
+	return err
+}
+
+// CacheGet reads an intermediate result of kind. A value older than maxAge
+// is a miss. A zero maxAge never expires.
+func (db *DB) CacheGet(ctx context.Context, kind, key string, maxAge time.Duration) ([]byte, bool, error) {
+	var value []byte
+	var at int64
+	err := db.sql.QueryRowContext(ctx, `SELECT value, at FROM cache WHERE kind = ? AND key = ?`, kind, key).Scan(&value, &at)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if maxAge > 0 && time.Since(time.Unix(at, 0)) > maxAge {
+		return nil, false, nil
+	}
+	return value, true, nil
+}
+
+// CachePut stores an intermediate result of kind.
+func (db *DB) CachePut(ctx context.Context, kind, key string, value []byte) error {
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO cache (kind, key, value, at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(kind, key) DO UPDATE SET value = excluded.value, at = excluded.at`,
+		kind, key, value, time.Now().Unix())
+	return err
+}
+
+// CachePrune drops cached results written before cutoff.
+func (db *DB) CachePrune(ctx context.Context, cutoff time.Time) error {
+	_, err := db.sql.ExecContext(ctx, `DELETE FROM cache WHERE at < ?`, cutoff.Unix())
 	return err
 }
 
