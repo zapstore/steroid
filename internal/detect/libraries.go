@@ -29,6 +29,7 @@ type Library struct {
 // Report is the privacy and security sheet for one APK.
 type Report struct {
 	Package              string
+	Version              string
 	Libraries            []Library
 	LibraryCount         int
 	AntiFeatures         []string
@@ -48,10 +49,12 @@ func Analyze(apkPath string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	comps, perms, pkg, manifestOK := manifestSignals(apkPath)
+	sig, manifestOK := manifestSignals(apkPath)
+	comps, perms, pkg := sig.components, sig.perms, sig.pkg
 	sos := nativeNames(apkPath)
 	rep := idx.report(classes, comps, sos, perms)
 	rep.Package = pkg
+	rep.Version = sig.version
 	rep.Manifest = manifestOK
 	rep.Permissions = append([]string(nil), perms...)
 	rep.Components = append([]string(nil), comps...)
@@ -190,6 +193,9 @@ func (x index) report(classes, components, sonames, perms []string) Report {
 		order = append(order, id)
 	}
 	for _, classPath := range classes {
+		if stubClass(classPath) {
+			continue
+		}
 		if row, ok := x.longest(classPath); ok {
 			add(row.id, x.library(row))
 		}
@@ -208,6 +214,9 @@ func (x index) report(classes, components, sonames, perms []string) Report {
 		kept = append(kept, id)
 	}
 	for _, classPath := range classes {
+		if stubClass(classPath) {
+			continue
+		}
 		dotted := strings.TrimPrefix(classPath, "/")
 		dotted = strings.ReplaceAll(dotted, "/", ".")
 		for _, rule := range x.exodus {
@@ -251,6 +260,23 @@ func (x index) report(classes, components, sonames, perms []string) Report {
 		AntiFeatures:         uniq(anti),
 		DangerousPermissions: dangerous(perms),
 	}
+}
+
+// stubPrefixes are classes that sit under a tracker's package but are not
+// the tracker. Firebase Cloud Messaging and Installations ship the Analytics
+// connector, an interface with no SDK behind it. Counting it would report
+// Firebase Analytics for every app that only uses push.
+var stubPrefixes = []string{
+	"/com/google/firebase/analytics/connector",
+}
+
+func stubClass(classPath string) bool {
+	for _, prefix := range stubPrefixes {
+		if classPath == prefix || strings.HasPrefix(classPath, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (x index) longest(classPath string) (libRow, bool) {
@@ -361,17 +387,18 @@ var knownSO = map[string]Library{
 	"libsqlcipher.so":      {Name: "SQLCipher", Type: "Utility"},
 }
 
-func manifestSignals(apkPath string) (components, perms []string, pkg string, ok bool) {
+func manifestSignals(apkPath string) (*signalCollector, bool) {
 	c := &signalCollector{}
 	zipErr, _, manifestErr := apkparser.ParseApk(apkPath, c)
 	if zipErr != nil || manifestErr != nil {
-		return nil, nil, "", false
+		return &signalCollector{}, false
 	}
-	return c.components, c.perms, c.pkg, true
+	return c, true
 }
 
 type signalCollector struct {
 	pkg        string
+	version    string
 	components []string
 	perms      []string
 }
@@ -384,6 +411,7 @@ func (c *signalCollector) EncodeToken(token xml.Token) error {
 	switch start.Name.Local {
 	case "manifest":
 		c.pkg = attr(start, "package")
+		c.version = attr(start, "versionName")
 	case "uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m":
 		if name := attr(start, "name"); name != "" {
 			c.perms = append(c.perms, name)

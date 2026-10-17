@@ -106,22 +106,71 @@ func reasonText(row Row) string {
 	if restatesPermission(phrase, perms) {
 		phrase = ""
 	}
-	var extra []string
-	low := strings.ToLower(phrase)
-	for _, part := range other {
-		if phrase != "" && strings.Contains(low, strings.ToLower(part)) {
-			continue
-		}
-		extra = append(extra, part)
-	}
+	found := findings(phrase, other)
 	switch {
 	case phrase == "":
-		return strings.Join(extra, ", ")
-	case len(extra) == 0:
+		return found
+	case found == "":
 		return phrase
-	default:
-		return phrase + ", " + strings.Join(extra, ", ")
 	}
+	if !strings.ContainsAny(phrase[len(phrase)-1:], ".!?") {
+		phrase += "."
+	}
+	if !strings.Contains(found, ": ") {
+		found = "Libraries: " + found
+	}
+	return phrase + " " + found + "."
+}
+
+// findings groups scanner findings such as "Google Play services: Google Cast"
+// by their kind. A library the phrase already names is left out. Generic Google
+// Mobile Services is left out when there is a phrase or a specific library.
+func findings(phrase string, parts []string) string {
+	low := strings.ToLower(phrase)
+	var kinds []string
+	names := map[string][]string{}
+	for _, part := range parts {
+		kind, name, ok := strings.Cut(part, ": ")
+		if !ok {
+			kind, name = "", part
+		}
+		if phrase != "" && (strings.Contains(low, strings.ToLower(name)) || genericGoogle(name)) {
+			continue
+		}
+		if _, seen := names[kind]; !seen {
+			kinds = append(kinds, kind)
+		}
+		names[kind] = append(names[kind], name)
+	}
+	var out []string
+	for _, kind := range kinds {
+		list := names[kind]
+		if len(list) > 1 {
+			var specific []string
+			for _, name := range list {
+				if !genericGoogle(name) {
+					specific = append(specific, name)
+				}
+			}
+			if len(specific) > 0 {
+				list = specific
+			}
+		}
+		text := strings.Join(list, ", ")
+		if kind != "" {
+			text = kind + ": " + text
+		}
+		out = append(out, text)
+	}
+	return strings.Join(out, "; ")
+}
+
+func genericGoogle(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "google mobile services", "play services", "google play services":
+		return true
+	}
+	return false
 }
 
 // permissionIDs lists the Android permission ids on the row.

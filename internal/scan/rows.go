@@ -45,12 +45,20 @@ func FromReport(rep detect.Report, hash string) []Row {
 		}
 	}
 	for _, lib := range rep.Libraries {
-		if skipLibrary(lib) {
-			continue
-		}
 		label := lib.Name
 		if label == "" {
 			label = lib.ID
+		}
+		// The corpus files Google Mobile Services under Development Framework,
+		// so Google is checked before frameworks are skipped.
+		if googlePlay(lib) {
+			note("google_services", "Google Play services: "+label)
+		}
+		if firebaseMessaging(lib) {
+			note("google_services", "Firebase Cloud Messaging: "+label)
+		}
+		if skipLibrary(lib) {
+			continue
 		}
 		antis := antiSet(lib.AntiFeatures)
 		if strings.EqualFold(lib.Type, "Mobile Analytics") || antis["Tracking"] {
@@ -58,12 +66,6 @@ func FromReport(rep detect.Report, hash string) []Row {
 		}
 		if strings.EqualFold(lib.Type, "Advertisement") || antis["Ads"] {
 			note("ads", label)
-		}
-		if googlePlay(lib) {
-			note("google_services", "Google Play services: "+label)
-		}
-		if firebaseMessaging(lib) {
-			note("google_services", "Firebase Cloud Messaging: "+label)
 		}
 	}
 	for _, fact := range libOrder {
@@ -78,13 +80,10 @@ func FromReport(rep detect.Report, hash string) []Row {
 	// google_services yes: Play services, Firebase Cloud Messaging, or both. Notes name which.
 	// no: neither. Notes stay empty.
 	// ads and tracking are yes when a library is present, and left out otherwise.
-	// A google_services yes also sets tracking to yes, with empty notes when that is the only reason.
+	// Google services alone is not tracking. The google_services row says that on its own.
 	if !found["google_services"] {
 		add("google_services", "")
 		setValue(rows, "google_services", "no")
-	}
-	if !found["tracking"] && valueOf(rows, "google_services") == "yes" {
-		add("tracking", "")
 	}
 	if rep.Manifest {
 		grouped := map[string][]string{}

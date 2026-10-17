@@ -82,7 +82,22 @@ func TestFromReportCoversPrivacyAndOffline(t *testing.T) {
 	}
 }
 
-func TestPlayServicesSetsTracking(t *testing.T) {
+func TestPlayServicesFiledAsFrameworkIsGoogle(t *testing.T) {
+	rows := FromReport(detect.Report{
+		Libraries: []detect.Library{{ID: "/com/google/android/gms", Path: "/com/google/android/gms/common", Name: "Google Mobile Services", Type: "Development Framework"}},
+	}, "abc")
+	for _, row := range rows {
+		if row.Fact == "google_services" {
+			if row.Value != "yes" || !strings.Contains(row.Evidence, "Google Mobile Services") {
+				t.Fatalf("%+v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("no google_services row %+v", rows)
+}
+
+func TestPlayServicesAloneIsNotTracking(t *testing.T) {
 	rows := FromReport(detect.Report{
 		Libraries: []detect.Library{{ID: "/com/google/android/gms", Name: "Play Services"}},
 	}, "abc")
@@ -95,7 +110,7 @@ func TestPlayServicesSetsTracking(t *testing.T) {
 	if got["google_services"] != "yes" || notes["google_services"] == "" {
 		t.Fatalf("%+v", rows)
 	}
-	if got["tracking"] != "yes" || notes["tracking"] != "" {
+	if _, ok := got["tracking"]; ok {
 		t.Fatalf("tracking %+v", rows)
 	}
 	if _, ok := got["ads"]; ok {
@@ -178,5 +193,20 @@ func TestCSVColumns(t *testing.T) {
 	}
 	if !strings.Contains(repeated, "Firebase Analytics") || !strings.Contains(repeated, "Sentry") {
 		t.Fatalf("%s", repeated)
+	}
+	google := string(CSV([]Row{{
+		Fact: "google_services", Value: "yes",
+		Evidence: "Google Play services: Google Cast, Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services",
+		Reason:   "Google Cast plays media on a TV, and push notifications arrive through Google",
+	}}))
+	if !strings.Contains(google, "\"Google Cast plays media on a TV, and push notifications arrive through Google. Google Play services: Google Cloud Messaging.\"") {
+		t.Fatalf("%s", google)
+	}
+	alone := string(CSV([]Row{{
+		Fact: "google_services", Value: "yes",
+		Evidence: "Google Play services: Google Mobile Services, Firebase Cloud Messaging: Firebase",
+	}}))
+	if !strings.Contains(alone, "\"Firebase Cloud Messaging: Firebase; Google Play services: Google Mobile Services\"") {
+		t.Fatalf("%s", alone)
 	}
 }

@@ -38,6 +38,19 @@ func TestReportFirebaseAndExodus(t *testing.T) {
 	}
 }
 
+func TestAnalyticsConnectorIsNotFirebaseAnalytics(t *testing.T) {
+	idx := corpusOnce()
+	got := idx.report(
+		[]string{"/com/google/firebase/analytics/connector/AnalyticsConnector"},
+		nil, nil, nil,
+	)
+	for _, lib := range got.Libraries {
+		if lib.Name == "Firebase Analytics" || has(lib.AntiFeatures, "Tracking") {
+			t.Fatalf("connector reported as %+v", lib)
+		}
+	}
+}
+
 func has(in []string, want string) bool {
 	for _, s := range in {
 		if s == want {
