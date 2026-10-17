@@ -8,18 +8,35 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/zapstore/steroid/internal/llm"
 )
 
 // Config is the remote LLM the overview call uses.
 // FallbackURL and FallbackKey are optional. The chat call uses them when
-// the primary provider is unreachable.
+// the primary provider is down. FallbackModels are that provider's model
+// names; empty means the primary list.
 type Config struct {
-	ProviderURL string
-	APIKey      string
-	Model       string
-	Fallbacks   []string
-	FallbackURL string
-	FallbackKey string
+	ProviderURL    string
+	APIKey         string
+	Model          string
+	Fallbacks      []string
+	FallbackURL    string
+	FallbackKey    string
+	FallbackModels []string
+}
+
+// Providers is the primary, then the fallback when it is set.
+func (c Config) Providers() []llm.Provider {
+	models := append([]string{c.Model}, c.Fallbacks...)
+	out := []llm.Provider{{Name: "primary", URL: c.ProviderURL, Key: c.APIKey, Models: models}}
+	if c.FallbackURL != "" {
+		fm := c.FallbackModels
+		if len(fm) == 0 {
+			fm = models
+		}
+		out = append(out, llm.Provider{Name: "fallback", URL: c.FallbackURL, Key: c.FallbackKey, Models: fm})
+	}
+	return out
 }
 
 // LoadDotEnv reads .env from the exact working directory. It does not
@@ -53,16 +70,13 @@ func New() Config {
 		cfg.Model = models[0]
 		cfg.Fallbacks = models[1:]
 	}
+	cfg.FallbackModels = splitCSV(os.Getenv("LLM_FALLBACK_MODEL"))
 	return cfg
 }
 
 // CompletionsURL appends /chat/completions unless already present.
 func CompletionsURL(root string) string {
-	root = strings.TrimRight(root, "/")
-	if strings.HasSuffix(root, "/chat/completions") {
-		return root
-	}
-	return root + "/chat/completions"
+	return llm.CompletionsURL(root)
 }
 
 func splitCSV(s string) []string {
@@ -89,6 +103,9 @@ func (c *Config) Validate() error {
 	}
 	if (c.FallbackURL == "") != (c.FallbackKey == "") {
 		return fmt.Errorf("set LLM_FALLBACK_URL and LLM_FALLBACK_API_KEY together")
+	}
+	if len(c.FallbackModels) > 0 && c.FallbackURL == "" {
+		return fmt.Errorf("LLM_FALLBACK_MODEL needs LLM_FALLBACK_URL")
 	}
 	return nil
 }
