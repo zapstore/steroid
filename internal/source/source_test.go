@@ -43,7 +43,11 @@ if [ "$1" = "clone" ]; then
   exit 0
 fi
 if [ "$1" = "-C" ]; then
-  echo 2222222222222222222222222222222222222222
+  case "$3" in
+    ls-tree) printf '100644 blob 1111\tREADME.md\000100644 blob 2222\ttest/big.json\000' ;;
+    rev-list) ;;
+    *) echo 2222222222222222222222222222222222222222 ;;
+  esac
   exit 0
 fi
 echo "unexpected $*" >&2
@@ -99,6 +103,15 @@ if [ "$1" = "-C" ]; then
   if [ "$cmd" = "checkout" ]; then
     echo '# App' > "$dir/README.md"
   fi
+  if [ "$cmd" = "ls-tree" ]; then
+    printf '100644 blob 1111\tREADME.md\000100644 blob 3333\tapp/huge.kt\000'
+  fi
+  if [ "$cmd" = "rev-list" ]; then
+    echo '?3333'
+  fi
+  if [ "$cmd" = "config" ] || [ "$cmd" = "update-ref" ]; then
+    :
+  fi
   if [ "$cmd" = "rev-parse" ]; then
     echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   fi
@@ -147,7 +160,16 @@ func TestCheckoutReadsTaggedCommit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("# App\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "README.md")
+	if err := os.MkdirAll(filepath.Join(origin, "LICENSES"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(origin, "LICENSES", "MIT.txt"), []byte("Permission is hereby granted, free of charge"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("LICENSES/MIT.txt", filepath.Join(origin, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "README.md", "LICENSE", "LICENSES/MIT.txt")
 	git("commit", "-m", "init")
 	git("tag", "v1.2.3")
 	bin := t.TempDir()
@@ -185,8 +207,14 @@ exec '%s' "$@"
 		t.Fatal(err)
 	}
 	defer tree.Close()
-	if tree.Files != 1 || !strings.HasSuffix(tree.URL, "@v1.2.3") {
+	if tree.Files != 2 || !strings.HasSuffix(tree.URL, "@v1.2.3") {
 		t.Fatalf("%+v", tree)
+	}
+	if info, err := os.Lstat(filepath.Join(tree.Dir, "LICENSE")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("license %v %v", info, err)
+	}
+	if f := ReadFacts(tree, "", ""); f.License != "MIT" {
+		t.Fatalf("%+v", f)
 	}
 	if _, err := os.Stat(filepath.Join(tree.Dir, ".git")); !os.IsNotExist(err) {
 		t.Fatal(".git was kept")
