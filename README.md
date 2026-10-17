@@ -19,6 +19,34 @@ make linux-amd64
 
 Needs CGO (`go-sqlite3`). The binary is `dist/steroid-<os>-<arch>`.
 
+## About evals
+
+`evals/about.jsonl` holds labeled listings. `abouteval` sends each one the about call the enricher would send, scores the reply as it arrived (no retry, no fallback model), and prints pass rates.
+
+```
+make eval                                  # dev split, LLM_MODEL
+make eval ARGS="-split all -n 3 -out r.jsonl"
+make eval ARGS="-model my-finetune -split test"
+make eval ARGS="-split all -candidates"    # no model: check the labels and the offered descriptions
+make eval ARGS="-export sft.jsonl"         # train split as chat fine-tuning examples
+make eval ARGS="-mine events.jsonl" > new.jsonl   # unlabeled cases from a snapshot, tagged
+make eval ARGS="-draft new.jsonl -model deepseek/deepseek-v4-pro" > evals/about-draft.jsonl
+make eval ARGS="-cases evals/about.jsonl,evals/about-draft.jsonl -export sft.jsonl"
+```
+
+`-draft` has a model label unlabeled cases as train drafts. A draft whose reference reply fails its own labels is sent back with the reason, up to three times, then dropped. Ids already in `-cases` are skipped, so dev and test never become train. `evals/about-draft.jsonl` is model-labeled and unreviewed: move a case to `evals/about.jsonl` once a person has checked it. `deepseek-v4-pro` agreed best with the reviewed labels (28 of 35 keep-or-write calls).
+
+A case has a `split` (`train`, `dev`, or `test`) and a `want`:
+
+- `action`: `keep` when the offered description is the right about, `write` when it is not, absent when either is fine.
+- `must`: groups of phrases. The about contains one phrase of every group. Phrases are lowercase substrings, so `shak` matches "shake" and "shaking".
+- `must_not`: phrases that never appear, such as the hook the description opens with.
+- `about`, `keywords`, `queries`: the reference reply. Train cases need it to be exported.
+
+Besides `must` and `must_not`, every about is checked for length (100 to 300), the enricher's own rejections, English, the app name, and garbled edits ("the the app", a sentence that starts lowercase). `trap` is how often the model kept a description that fails its case. `rewrite` is how often it wrote over one labeled `keep`.
+
+Only `train` is exported. Tune prompts and checks against `dev`. Run `test` to compare models, and do not label from its failures.
+
 ## Environment
 
 Reads `.env` from the working directory. A variable already set in the process wins.

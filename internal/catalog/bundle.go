@@ -20,13 +20,11 @@ import (
 // Listing is the resolved app the relay would seal.
 type Listing = catalog.Listing
 
-// parallelJobs is how many listings enrich at once.
-const parallelJobs = 4
+// parallelJobs is how many listings enrich at once. The git, download, and
+// model pools inside a run bound each kind of work separately.
+const parallelJobs = 8
 
 const preferredABI = "android-arm64-v8a"
-
-// avatarMu keeps two listings by the same author from writing one avatar at once.
-var avatarMu sync.Mutex
 
 // EnrichMatching enriches listings whose app id contains filter.
 // It reads those listings from the relay database. It does not write a snapshot or a bundle.
@@ -57,8 +55,8 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 			return err
 		}
 	}
-	writeBlock(enrichLine(len(listings), filter, force))
-	return enrichWork(ctx, data, modelDir, listings, pictures, debug)
+	writeBlock(ctx, enrichLine(len(listings), filter, force))
+	return enrichWork(ctx, data, modelDir, listings, pictures, debug, force)
 }
 
 // EnrichIDs enriches the listings whose app id is in ids.
@@ -91,8 +89,8 @@ func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string)
 	if len(work) == 0 {
 		return nil
 	}
-	writeBlock(enrichLine(len(work), "", false))
-	return enrichWork(ctx, data, modelDir, work, pictures, false)
+	writeBlock(ctx, enrichLine(len(work), "", false))
+	return enrichWork(ctx, data, modelDir, work, pictures, false, false)
 }
 
 func enrichLine(n int, filter string, force bool) string {
@@ -106,28 +104,38 @@ func enrichLine(n int, filter string, force bool) string {
 	return s
 }
 
-func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures map[string]string, debug bool) error {
+// fresh skips the model reply cache, the stored trees, and the website cache.
+func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures map[string]string, debug, fresh bool) error {
 	db, err := artifacts.Open(ctx, artifacts.Path(data))
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	client := &http.Client{Timeout: 2 * time.Minute}
+	e := newEnricher(db, data, modelDir, &http.Client{Timeout: 2 * time.Minute}, debug, fresh)
+	e.prune(ctx)
 	var failed atomic.Int32
 	err = processListings(ctx, work, parallelJobs, func(ctx context.Context, _ int, listing Listing) error {
-		bad, err := Enrich(ctx, db, data, modelDir, listing, pictures[listing.App.PubKey], client, debug)
+		bad, err := e.enrich(ctx, listing, pictures[listing.App.PubKey])
 		if bad || err != nil {
 			failed.Add(1)
 		}
 		return nil
 	})
-	bad := int(failed.Load())
-	if bad == 0 {
-		writeBlock(fmt.Sprintf("%d ok", len(work)))
-	} else {
-		writeBlock(fmt.Sprintf("%d ok, %d failed", len(work)-bad, bad))
-	}
+	writeBlock(ctx, summaryLine(len(work), int(e.degraded.Load()), int(failed.Load())))
 	return err
+}
+
+// summaryLine counts listings that finished cleanly, with a fallback, and
+// with a failure that is retried on the next run.
+func summaryLine(total, degraded, failed int) string {
+	s := fmt.Sprintf("%d ok", total-degraded-failed)
+	if degraded > 0 {
+		s += fmt.Sprintf(", %d degraded", degraded)
+	}
+	if failed > 0 {
+		s += fmt.Sprintf(", %d failed", failed)
+	}
+	return s
 }
 
 type bundleJob struct {
@@ -198,7 +206,8 @@ func processListings(ctx context.Context, work []Listing, limit int, fn func(con
 
 // storeAvatar writes a publisher picture from a kind 0 picture URL.
 // wrote is false when the URL is empty or the stored picture already matches it.
-func storeAvatar(ctx context.Context, db *artifacts.DB, pubkey, pictureURL string) (bool, error) {
+// mu keeps two listings by the same author from writing one avatar at once.
+func storeAvatar(ctx context.Context, db *artifacts.DB, mu *sync.Mutex, pubkey, pictureURL string) (bool, error) {
 	pictureURL = strings.TrimSpace(pictureURL)
 	pubkey = strings.TrimSpace(pubkey)
 	if pictureURL == "" || pubkey == "" {
@@ -218,8 +227,8 @@ func storeAvatar(ctx context.Context, db *artifacts.DB, pubkey, pictureURL strin
 	if err != nil {
 		return false, err
 	}
-	avatarMu.Lock()
-	defer avatarMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 	if avatarCurrent(ctx, db, pubkey, pictureURL) {
 		return false, nil
 	}

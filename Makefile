@@ -20,7 +20,7 @@ CGO_LDFLAGS := $(filter-out -Wl$(comma)-no_warn_duplicate_libraries,$(CGO_LDFLAG
 endif
 export CGO_LDFLAGS
 
-.PHONY: bin darwin-arm64 linux-arm64 linux-amd64 clean
+.PHONY: bin darwin-arm64 linux-arm64 linux-amd64 eval clean
 
 bin:
 	mkdir -p dist
@@ -41,6 +41,9 @@ linux-amd64:
 	$(MAKE) bin GOOS=linux GOARCH=amd64 \
 		CC="zig cc -target x86_64-linux-gnu" \
 		CXX="zig c++ -target x86_64-linux-gnu"
+
+eval:
+	CGO_ENABLED=$(CGO_ENABLED) go run $(GOFLAGS) ./cmd/abouteval $(ARGS)
 
 clean:
 	rm -rf dist

@@ -5,25 +5,27 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zapstore/steroid/internal/flags"
 	"github.com/zapstore/steroid/internal/scan"
 )
 
 // pillFacts is the order the security file and the app page share.
 var pillFacts = []string{
-	"google_services", "tracking", "ads", "offline_capable", "e2ee", "open_source",
+	"google_services", "tracking", "ads", "offline_capable", "e2ee", "source_available",
 }
 
 // falseFacts are the only facts stored as false. The others are true or absent.
 var falseFacts = map[string]bool{
-	"google_services": true,
-	"offline_capable": true,
-	"open_source":     true,
+	"google_services":  true,
+	"offline_capable":  true,
+	"source_available": true,
 }
 
 // securityFile is the security artifact: one JSON object.
 // csv may still hold permission rows; those become notes, not facts.
 // keywords are already filtered. An empty list omits the key.
-func securityFile(csv, perms, prose string, keywords []string) string {
+// flags are shown next to the facts. An empty list omits the key.
+func securityFile(csv, perms, prose string, keywords []string, found []flags.Flag) string {
 	facts := map[string]bool{}
 	notes := map[string]string{}
 	if recs, err := scan.Records(csv); err == nil {
@@ -54,7 +56,7 @@ func securityFile(csv, perms, prose string, keywords []string) string {
 				continue
 			}
 			facts[fact] = yes
-			if reason != "" && (yes || fact == "open_source") {
+			if reason != "" && (yes || fact == "source_available") {
 				notes[fact] = reason
 			}
 		}
@@ -64,6 +66,7 @@ func securityFile(csv, perms, prose string, keywords []string) string {
 		Notes:       notes,
 		Permissions: permissionIDs(perms),
 		Keywords:    keywords,
+		Flags:       found,
 	}
 	doc.Notice, doc.Body = splitProse(prose)
 	if len(doc.Facts) == 0 {
@@ -86,6 +89,7 @@ type securityJSON struct {
 	Notice      string            `json:"notice"`
 	Body        string            `json:"body"`
 	Keywords    []string          `json:"keywords,omitempty"`
+	Flags       []flags.Flag      `json:"flags,omitempty"`
 }
 
 func knownFact(fact string) bool {
@@ -226,26 +230,39 @@ func splitSecurity(text string) (csv, perms, prose string, ok bool) {
 	return csv, perms, prose, true
 }
 
-// storedParts reads a security file, JSON or the older dash-separated text.
-// Text that is neither returns empty parts. A dash-separated file has no keywords.
-func storedParts(text string) (csv, perms, prose string, keywords []string) {
-	if csv, perms, prose, keywords, ok := partsOf(text); ok {
-		return csv, perms, prose, keywords
-	}
-	return "", "", "", nil
+// storedDoc is a security file split into the parts a run may replace.
+type storedDoc struct {
+	CSV      string
+	Perms    string
+	Prose    string
+	Keywords []string
+	Flags    []flags.Flag
 }
 
-func partsOf(text string) (csv, perms, prose string, keywords []string, ok bool) {
+// storedParts reads a security file, JSON or the older dash-separated text.
+// Text that is neither returns empty parts. A dash-separated file has no keywords or flags.
+func storedParts(text string) storedDoc {
+	doc, _ := partsOf(text)
+	return doc
+}
+
+func partsOf(text string) (storedDoc, bool) {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "{") {
 		var doc securityJSON
 		if err := json.Unmarshal([]byte(text), &doc); err != nil {
-			return "", "", "", nil, false
+			return storedDoc{}, false
 		}
-		return factCSVFrom(doc), strings.Join(doc.Permissions, ", "), proseOf(doc), doc.Keywords, true
+		return storedDoc{
+			CSV: factCSVFrom(doc), Perms: strings.Join(doc.Permissions, ", "), Prose: proseOf(doc),
+			Keywords: doc.Keywords, Flags: doc.Flags,
+		}, true
 	}
-	csv, perms, prose, ok = splitSecurity(text)
-	return csv, perms, prose, nil, ok
+	csv, perms, prose, ok := splitSecurity(text)
+	if !ok {
+		return storedDoc{}, false
+	}
+	return storedDoc{CSV: csv, Perms: perms, Prose: prose}, true
 }
 
 func factCSVFrom(doc securityJSON) string {
@@ -276,39 +293,14 @@ func proseOf(doc securityJSON) string {
 	return notice + "\n\n" + body
 }
 
-// markClosedSource sets open_source to no and keeps the other facts.
-// Text that is already closed is returned unchanged.
-func markClosedSource(text string) string {
-	csv, perms, prose, keywords := storedParts(text)
-	if strings.Contains(csv, `"open_source","no"`) {
-		return text
-	}
-	recs, err := scan.Records(csv)
-	var rows []scan.Row
-	if err == nil {
-		for _, rec := range recs {
-			if len(rec) < 2 || strings.TrimSpace(rec[0]) == "open_source" {
-				continue
-			}
-			row := scan.Row{Fact: strings.TrimSpace(rec[0]), Value: strings.TrimSpace(rec[1])}
-			if len(rec) > 2 {
-				row.Reason = strings.TrimSpace(rec[2])
-			}
-			rows = append(rows, row)
-		}
-	}
-	rows = append(rows, scan.Row{Fact: "open_source", Value: "no"})
-	return securityFile(string(scan.CSV(rows)), perms, prose, keywords)
-}
-
 // factsReady is security text whose facts already include the rows every app must keep.
 func factsReady(text string) bool {
-	csv, _, _, _, ok := partsOf(text)
+	doc, ok := partsOf(text)
 	if !ok {
 		return false
 	}
 	for _, fact := range []string{"google_services", "offline_capable"} {
-		if !strings.Contains(csv, `"`+fact+`"`) {
+		if !strings.Contains(doc.CSV, `"`+fact+`"`) {
 			return false
 		}
 	}

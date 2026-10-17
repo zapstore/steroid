@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/zapstore/steroid/enrich"
-	"github.com/zapstore/steroid/internal/run"
+	"github.com/zapstore/steroid/internal/config"
 )
 
 // version is the build ref, set with -X main.version=...
@@ -23,7 +23,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet("steroid", flag.ExitOnError)
 	debug := fs.Bool("debug", false, "log each step, and write prompt and response under data/debug/<app-id>")
-	force := fs.Bool("force", false, "delete the app row before enriching")
+	force := fs.Bool("force", false, "delete the app row and skip cached model replies, trees, and websites")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: steroid -v\n")
 		fmt.Fprintf(os.Stderr, "       steroid [--debug] [--force] app_id\n")
@@ -40,7 +40,8 @@ func main() {
 		slog.Error("enrich", "error", err)
 		os.Exit(1)
 	}
-	if _, err := run.ModelConfig(); err != nil {
+	cfg := config.New()
+	if err := cfg.Validate(); err != nil {
 		env.log.Error("enrich", "error", err)
 		os.Exit(1)
 	}

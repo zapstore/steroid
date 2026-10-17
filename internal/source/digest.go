@@ -30,6 +30,10 @@ const (
 	denialReach      = 120
 	maxUseLines      = 160
 	maxUseRunes      = 640
+	maxReadmeBytes   = 2500
+	maxOutboundBytes = 12000
+	maxSignalBytes   = 6000
+	maxQuoteBytes    = 4000
 )
 
 // Digest is one bounded reading of an extracted tree.
@@ -177,7 +181,6 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 		useQuotes  = map[string]quote{}
 		account    *quote
 		encrypt    *quote
-		offline    *quote
 		parsed     []parsedSrc
 	)
 	parser := newSinkParser()
@@ -237,11 +240,6 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 				}
 			}
 		}
-		if offline == nil && (codeExt(rel) || base == "readme.md") {
-			if q, ok := findQuote(rel, lines, offlineLine); ok {
-				offline = &q
-			}
-		}
 		captureUses(rel, lines, uses, useQuotes)
 		return nil
 	})
@@ -270,7 +268,7 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 		}
 		return a.line < b.line
 	})
-	return Digest{Text: formatDigest(len(paths), readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt, offline)}
+	return Digest{Text: formatDigest(len(paths), readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt)}
 }
 
 func scanFile(rel string, lines []string, addHit func(topic, fact, rel string, line int, text string, around []hit)) {
@@ -534,7 +532,7 @@ func parseManifest(rel, body string) manifestInfo {
 	return info
 }
 
-func formatDigest(files int, readmePath, readme, project string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt, offline *quote) string {
+func formatDigest(files int, readmePath, readme, project string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt *quote) string {
 	var b strings.Builder
 	if files > 0 {
 		b.WriteString("Files: ")
@@ -549,11 +547,11 @@ func formatDigest(files int, readmePath, readme, project string, manifest manife
 			b.WriteByte('\n')
 		}
 	}
-	if readmePath != "" && strings.TrimSpace(readme) != "" {
+	if brief := Brief(readme, maxReadmeBytes); readmePath != "" && brief != "" {
 		b.WriteString("\nReadme ")
 		b.WriteString(readmePath)
 		b.WriteString(":\n")
-		b.WriteString(strings.TrimSpace(readme))
+		b.WriteString(brief)
 		b.WriteByte('\n')
 	}
 	if dump := strings.TrimSpace(project); dump != "" {
@@ -564,7 +562,11 @@ func formatDigest(files int, readmePath, readme, project string, manifest manife
 	if len(outbound) > 0 {
 		b.WriteString("\nOutbound:\n")
 		prev := ""
+		start := b.Len()
 		for _, h := range outbound {
+			if b.Len()-start > maxOutboundBytes {
+				break
+			}
 			if h.path != prev {
 				if prev != "" {
 					b.WriteByte('\n')
@@ -620,10 +622,13 @@ func formatDigest(files int, readmePath, readme, project string, manifest manife
 	}
 	writeNamed(&b, "Account", account)
 	writeNamed(&b, "Encryption", encrypt)
-	writeNamed(&b, "Offline", offline)
 	if len(hits) > 0 {
 		b.WriteString("\nSignals:\n")
+		start := b.Len()
 		for _, h := range hits {
+			if b.Len()-start > maxSignalBytes {
+				break
+			}
 			writeSignal(&b, h)
 			for _, around := range h.around {
 				around.topic = h.topic
@@ -663,7 +668,11 @@ func writeNamed(b *strings.Builder, title string, q *quote) {
 func writeQuote(b *strings.Builder, q quote) {
 	b.WriteString(q.path)
 	b.WriteByte('\n')
+	start := b.Len()
 	for _, line := range q.lines {
+		if b.Len()-start > maxQuoteBytes {
+			break
+		}
 		b.WriteString(strconv.Itoa(line.line))
 		b.WriteString(": ")
 		b.WriteString(line.text)
@@ -739,14 +748,18 @@ func skipHost(host string) bool {
 }
 
 var factUses = map[string][]string{
-	"contacts":                 {"contactscontract"},
-	"read_sms":                 {"smsmanager", "telephonymanager"},
-	"receive_sms":              {"smsmanager", "telephonymanager"},
-	"send_sms":                 {"smsmanager"},
-	"coarse_location":          {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
-	"fine_location":            {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
-	"camera":                   {"imagecapture", "camerax"},
-	"microphone":               {"mediarecorder", "audiorecord"},
+	"contacts":        {"contactscontract"},
+	"read_sms":        {"smsmanager", "telephonymanager"},
+	"receive_sms":     {"smsmanager", "telephonymanager"},
+	"send_sms":        {"smsmanager"},
+	"coarse_location": {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
+	"fine_location":   {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
+	"camera": {
+		"imagecapture", "camerax", "cameradevice", "cameramanager", "previewview", "scancontract",
+		"barcodescanner", "barcodescanning", "decoratedbarcodeview", "integrator", "mobilescanner",
+		"qrview", "qr_code_scanner", "visioncamera", "expo-camera", "html5qrcode", "getusermedia",
+	},
+	"microphone":               {"mediarecorder", "audiorecord", "speechrecognizer", "getusermedia"},
 	"call_log":                 {"calllog"},
 	"request_install_packages": {"request_install_packages"},
 	"query_all_packages":       {"query_all_packages", "getinstalledpackages", "getinstalledapplications"},
@@ -965,18 +978,6 @@ func accountLine(low string) bool {
 		return false
 	}
 	return containsAny(low, "signin(", "sign_in(", "login(", "authenticate(", ".signin(", ".login(")
-}
-
-func offlineLine(low string) bool {
-	if strings.HasPrefix(low, "import ") || strings.HasPrefix(low, "package ") {
-		return false
-	}
-	return containsAny(low,
-		"works offline", "work offline", "usable offline", "available offline",
-		"offline mode", "offline-first", "offline first",
-		"without internet", "without a network", "no internet required",
-		"local-first", "local first",
-	)
 }
 
 func e2eeLine(low string) bool {

@@ -30,7 +30,7 @@ func TestReadDigest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lib, "exfil.dart"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Calc\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Calc\n\nAdds numbers.\n\n## Build\n\n```\nflutter build apk\n```\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte("name: calc\ndescription: A calculator\n"), 0o644); err != nil {
@@ -53,6 +53,9 @@ func TestReadDigest(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "flutter build") || strings.Contains(got, "# Build") {
+		t.Fatalf("build section leaked:\n%s", got)
 	}
 	if strings.Contains(got, "pubspec.yaml") || strings.Contains(got, "A calculator") {
 		t.Fatalf("source project files leaked:\n%s", got)
@@ -222,8 +225,6 @@ func TestReadQuotesYesFactSignalAndNeighbor(t *testing.T) {
 		"Account:\nsrc/auth.kt\n",
 		"fun login(user: String, password: String)",
 		"Encryption:\nsrc/box.kt\n",
-		"Offline:\nsrc/store.kt\n",
-		"works offline",
 		"crypto_secretbox_easy(message)",
 		"- privacy network src/net.kt:2: val conn = HttpURLConnection()",
 		"- privacy network src/net.kt:1: fun leak() {",
@@ -232,6 +233,9 @@ func TestReadQuotesYesFactSignalAndNeighbor(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "Offline:") || strings.Contains(got, "works offline") {
+		t.Fatalf("offline claim quoted:\n%s", got)
 	}
 }
 

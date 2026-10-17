@@ -2,7 +2,12 @@ package generate
 
 import _ "embed"
 
-// Prompt is the system message for the store overview.
+// AboutPrompt is the system message for the about paragraph and search terms.
 //
-//go:embed prompt.md
-var Prompt string
+//go:embed prompt-about.md
+var AboutPrompt string
+
+// SecurityPrompt is the system message for the security note and facts.
+//
+//go:embed prompt-security.md
+var SecurityPrompt string

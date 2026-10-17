@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -11,48 +12,72 @@ import (
 var reportMu sync.Mutex
 
 // appReport is one enrichment, printed as a single block so parallel apps do not interleave.
+// Its methods are safe to call from the stages that run at once.
 type appReport struct {
-	id       string
-	version  string
-	plan     []string
-	ok       []string
-	fails    []string
+	mu      sync.Mutex
+	id      string
+	version string
+	plan    []string
+	ok      []string
+	fails   []string
+	// degraded is a stage that finished with a fallback, and why. It counts
+	// as done and is not retried; it is printed apart from ok.
+	degraded []string
 	debugDir string
 	live     bool
 	quiet    bool
-	begun    string
-	begunAt  time.Time
+	ctx      context.Context
+	timings  []timing
 }
 
-// mono is the clock for step durations. Tests replace it.
+// timing is how long one stage took.
+type timing struct {
+	Stage string
+	Took  time.Duration
+}
+
+// mono is the clock for stage durations. Tests replace it.
 var mono = time.Now
 
 func (r *appReport) mark(stage string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.ok = append(r.ok, stage)
 }
 
-// step prints the stage as it starts, then prints it again with the elapsed time when the next stage starts.
+// timed prints the stage when it starts and again with its duration when
+// the returned func runs. The duration is kept for the eval report.
+func (r *appReport) timed(stage, msg string) func() {
+	start := mono()
+	r.mu.Lock()
+	if r.live {
+		writeBlock(r.ctx, r.id+" "+oneLine(msg))
+	}
+	r.mu.Unlock()
+	return func() {
+		took := mono().Sub(start)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.timings = append(r.timings, timing{Stage: stage, Took: took})
+		if r.live {
+			writeBlock(r.ctx, r.id+" "+oneLine(msg)+" "+fmtDur(took))
+		}
+	}
+}
+
+// step prints one progress line. Stages that take time use timed.
 // It is a no-op unless --debug is set.
 func (r *appReport) step(msg string) {
 	if r == nil || !r.live {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	msg = oneLine(msg)
 	if msg == "" {
 		return
 	}
-	r.closeStep()
-	r.begun = msg
-	r.begunAt = mono()
-	writeBlock(r.id + " " + msg)
-}
-
-func (r *appReport) closeStep() {
-	if r == nil || !r.live || r.begun == "" {
-		return
-	}
-	writeBlock(r.id + " " + r.begun + " " + fmtDur(mono().Sub(r.begunAt)))
-	r.begun = ""
+	writeBlock(r.ctx, r.id+" "+msg)
 }
 
 func fmtDur(d time.Duration) string {
@@ -75,11 +100,30 @@ func (r *appReport) fail(stage string, err error) {
 		return
 	}
 	msg := stage + ": " + oneLine(err.Error())
+	r.mu.Lock()
 	r.fails = append(r.fails, msg)
+	r.mu.Unlock()
 	r.step("fail " + msg)
 }
 
+// degrade records a stage that finished with a fallback.
+func (r *appReport) degrade(stage, why string) {
+	r.mu.Lock()
+	r.degraded = append(r.degraded, stage+": "+oneLine(why))
+	r.mu.Unlock()
+	r.step("degraded " + stage + ": " + why)
+}
+
+// isDegraded reports a run that did not fail but used a fallback.
+func (r *appReport) isDegraded() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.degraded) > 0
+}
+
 func (r *appReport) failedStage(stage string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	prefix := stage + ":"
 	for _, fail := range r.fails {
 		if strings.HasPrefix(fail, prefix) {
@@ -90,13 +134,12 @@ func (r *appReport) failedStage(stage string) bool {
 }
 
 func (r *appReport) failed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if len(r.fails) > 0 {
 		return true
 	}
-	done := map[string]struct{}{}
-	for _, stage := range r.ok {
-		done[stage] = struct{}{}
-	}
+	done := r.doneStages()
 	for _, stage := range r.plan {
 		if _, ok := done[stage]; !ok {
 			return true
@@ -105,20 +148,40 @@ func (r *appReport) failed() bool {
 	return false
 }
 
+// doneStages is every stage marked ok or degraded. The caller holds r.mu.
+func (r *appReport) doneStages() map[string]struct{} {
+	done := map[string]struct{}{}
+	for _, stage := range r.ok {
+		done[stage] = struct{}{}
+	}
+	for _, d := range r.degraded {
+		stage, _, _ := strings.Cut(d, ":")
+		done[stage] = struct{}{}
+	}
+	return done
+}
+
 func (r *appReport) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	failed := map[string]struct{}{}
 	for _, fail := range r.fails {
 		stage, _, _ := strings.Cut(fail, ":")
 		failed[stage] = struct{}{}
 	}
-	done := map[string]struct{}{}
-	for _, stage := range r.ok {
-		done[stage] = struct{}{}
+	done := r.doneStages()
+	degraded := map[string]struct{}{}
+	for _, d := range r.degraded {
+		stage, _, _ := strings.Cut(d, ":")
+		degraded[stage] = struct{}{}
 	}
 	var ok []string
 	var missed []string
 	for _, stage := range r.plan {
 		if _, bad := failed[stage]; bad {
+			continue
+		}
+		if _, fallback := degraded[stage]; fallback {
 			continue
 		}
 		if _, good := done[stage]; good {
@@ -142,6 +205,9 @@ func (r *appReport) String() string {
 	} else {
 		fmt.Fprintf(&b, "  ok   %s\n", joinOr(ok, "-"))
 	}
+	for _, d := range r.degraded {
+		fmt.Fprintf(&b, "  degraded %s\n", d)
+	}
 	for _, fail := range r.fails {
 		fmt.Fprintf(&b, "  fail %s\n", fail)
 	}
@@ -155,14 +221,32 @@ func (r *appReport) String() string {
 }
 
 func (r *appReport) flush() {
-	r.closeStep()
 	if r.quiet {
 		return
 	}
-	writeBlock(r.String())
+	writeBlock(r.ctx, r.String())
 }
 
-func writeBlock(text string) {
+type reportKey struct{}
+
+type reportBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+// WithReport returns a context that keeps a copy of each enricher report line.
+func WithReport(ctx context.Context) (context.Context, func() string) {
+	buf := &reportBuf{}
+	return context.WithValue(ctx, reportKey{}, buf), buf.String
+}
+
+func (b *reportBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+func writeBlock(ctx context.Context, text string) {
 	if text == "" {
 		return
 	}
@@ -172,6 +256,16 @@ func writeBlock(text string) {
 	reportMu.Lock()
 	fmt.Fprint(os.Stderr, text)
 	reportMu.Unlock()
+	if ctx == nil {
+		return
+	}
+	buf, ok := ctx.Value(reportKey{}).(*reportBuf)
+	if !ok {
+		return
+	}
+	buf.mu.Lock()
+	buf.b.WriteString(text)
+	buf.mu.Unlock()
 }
 
 func joinOr(parts []string, empty string) string {

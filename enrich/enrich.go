@@ -14,6 +14,11 @@ func Matching(ctx context.Context, data, dbPath, modelDir, appID string, debug, 
 	return catalog.EnrichMatching(ctx, data, dbPath, modelDir, appID, debug, force)
 }
 
+// WithReport keeps a copy of the enricher report written during ctx.
+func WithReport(ctx context.Context) (context.Context, func() string) {
+	return catalog.WithReport(ctx)
+}
+
 // IDs enriches the listings with those app ids. A cache that already matches the listing does nothing.
 func IDs(ctx context.Context, data, dbPath string, ids []string) error {
 	return catalog.EnrichIDs(ctx, data, dbPath, modelDir(), ids)

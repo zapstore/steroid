@@ -1,17 +1,13 @@
-// Package run calls the scanner and the model for one listing.
+// Package run turns the scanner rows, the repository, and the model reply
+// into the fact rows for one listing.
 package run
 
 import (
-	"context"
-	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/zapstore/steroid/internal/apk"
-	"github.com/zapstore/steroid/internal/config"
 	"github.com/zapstore/steroid/internal/detect"
 	"github.com/zapstore/steroid/internal/generate"
-	"github.com/zapstore/steroid/internal/review"
 	"github.com/zapstore/steroid/internal/scan"
 	"github.com/zapstore/steroid/internal/source"
 )
@@ -45,103 +41,127 @@ func AppOf(in Input) generate.App {
 		Summary:    in.Summary,
 		Content:    in.Content,
 		Tags:       in.Tags,
-		Website:    site(in),
+		Website:    strings.TrimSpace(in.Website),
 		Repository: in.Repository,
 		License:    in.License,
 	}
 }
 
-func site(in Input) string {
-	return strings.TrimSpace(in.Website)
-}
-
-// Overview calls the LLM. summary is the about text.
-// note names the path that produced the text, including a review failure that fell through to assess.
-func Overview(ctx context.Context, cfg config.Config, client *http.Client, app generate.App, tree *source.Tree, rows []scan.Row, prevAbout, prevSecurity, prevFacts, project string) (string, string, []byte, []string, []string, string, error) {
-	if err := cfg.Validate(); err != nil {
-		return "", "", nil, nil, nil, "", err
-	}
-	src := ""
-	if tree != nil {
-		src = source.ReadWith(ctx, tree, scan.HasAPK(rows), source.Uses(rows), project).Text
-	}
-	var reviewErr error
-	if tree != nil {
-		gen, err := review.Run(ctx, cfg, client, tree, app, rows, prevAbout, prevSecurity, prevFacts, project)
-		if err == nil {
-			about, security, facts, err := finish(gen, rows, app, src, true)
-			return about, security, facts, gen.Keywords, gen.Queries, llmNote("review", gen.ProviderModel), err
-		}
-		reviewErr = err
-	}
-	gen, err := generate.Run(ctx, cfg, client, generate.Input{
-		App:       app,
-		Source:    src,
-		Sheet:     rows,
-		About:     prevAbout,
-		Security:  prevSecurity,
-		PrevFacts: prevFacts,
-	})
+// Scan reads scanner facts and the report from a verified APK.
+func Scan(file *apk.File) ([]scan.Row, detect.Report, error) {
+	report, err := detect.Analyze(file.Path)
 	if err != nil {
-		if reviewErr != nil {
-			return "", "", nil, nil, nil, "", fmt.Errorf("review: %v; assess: %w", reviewErr, err)
-		}
-		return "", "", nil, nil, nil, "", err
+		return nil, detect.Report{}, err
 	}
-	note := llmNote("assess", gen.ProviderModel)
-	if reviewErr != nil {
-		note += " (review failed: " + strings.Join(strings.Fields(reviewErr.Error()), " ") + ")"
-	}
-	about, security, facts, err := finish(gen, rows, app, src, tree != nil)
-	return about, security, facts, gen.Keywords, gen.Queries, note, err
+	return scan.FromReport(report, file.Hash), report, nil
 }
 
-func llmNote(path, model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return path
-	}
-	return path + " " + model
+// Repo is what this run learned about the repository.
+type Repo struct {
+	// Listed is true when the listing names a repository.
+	Listed bool
+	// Read is true when the checkout succeeded.
+	Read  bool
+	Facts source.Facts
+	// Failed is true when the repository could not be resolved or cloned.
+	Failed bool
+	// Unreadable is true when it failed because the remote refused or does
+	// not exist, so asking again soon gives the same answer.
+	Unreadable bool
 }
 
-func finish(gen generate.Result, rows []scan.Row, app generate.App, extra string, read bool) (string, string, []byte, error) {
-	facts := generate.Lock(gen.Facts, rows)
+// Rows merges the scan, the model reply, and the repository into the fact
+// rows. gen is nil when the model was not asked. sent is true when the
+// model saw source excerpts.
+func Rows(rows []scan.Row, gen *generate.SecurityResult, sent bool, app generate.App, repo Repo) []scan.Row {
 	rows = withoutFact(rows, "decentralized")
 	rows = withoutFact(rows, "accountless")
-	rows = claims(rows, facts)
-	rows = justify(rows, gen.Reason)
-	rows = ClosedFacts(rows, app, extra, read)
-	security := strings.TrimSpace(gen.Security)
-	return gen.About, security, scan.CSV(rows), nil
-}
-
-// ClosedFacts adds the yes/no rows every facts file must contain.
-// offline_capable is no when the scan did not find a phone with no INTERNET permission.
-// A model yes for offline_capable or e2ee is kept only when this run sent source.
-// open_source is yes only when this run sent source and the listing license is free.
-// A repository that was not read is unknown, so that row is left out.
-func ClosedFacts(rows []scan.Row, app generate.App, source string, read bool) []scan.Row {
-	sent := strings.TrimSpace(source) != ""
+	rows = withoutFact(rows, "open_source")
+	rows = withoutFact(rows, "source_available")
+	if gen != nil {
+		facts := generate.Lock(gen.Facts, rows)
+		rows = claims(rows, facts)
+		rows = justify(rows, gen.Reason)
+	}
 	if !sent {
-		rows = withoutUnbacked(rows, "offline_capable")
 		rows = withoutFact(rows, "e2ee")
 	}
+	rows = withoutUnbacked(rows, "offline_capable")
 	if !hasFact(rows, "offline_capable") {
 		rows = append(rows, scan.Row{Fact: "offline_capable", Value: "no", Basis: "apk"})
 	}
-	rows = withoutFact(rows, "open_source")
-	if strings.TrimSpace(app.Repository) != "" && !read && !sent {
-		return rows
+	if row, ok := SourceRow(app, repo); ok {
+		rows = append(rows, row)
 	}
-	value := "no"
-	var reason string
-	if sent {
-		if code, ok := freeLicense(app.License); ok {
-			value = "yes"
-			reason = code
+	return rows
+}
+
+// SourceRow is source_available. It is yes when the repository was read and
+// holds app code, and no when there is none or it cannot be read. The
+// license is the note. ok is false when the listing names a repository and
+// this run did not try to read it.
+func SourceRow(app generate.App, repo Repo) (scan.Row, bool) {
+	row := scan.Row{Fact: "source_available", Value: "no", Basis: "listing"}
+	switch {
+	case !repo.Listed:
+		row.Reason = "No repository is listed."
+	case repo.Failed:
+		row.Reason = "The listed repository could not be read."
+	case !repo.Read:
+		return scan.Row{}, false
+	case !repo.Facts.Code:
+		row.Reason = "The listed repository has no app code."
+	default:
+		row.Value = "yes"
+		row.Basis = "source"
+		row.Reason = licenseNote(app.License, repo.Facts)
+	}
+	return row, true
+}
+
+func licenseNote(listed string, f source.Facts) string {
+	listed = strings.TrimSpace(listed)
+	file := f.License
+	switch {
+	case file == "" && listed == "":
+		return "No license is declared."
+	case file == "":
+		if _, free := freeLicense(listed); free {
+			return listed + " license."
+		}
+		return listed + ", not an open source license."
+	case !f.FreeLicense:
+		return file + ", not an open source license."
+	case listed != "" && !sameLicense(listed, file):
+		return file + " license. The listing says " + listed + "."
+	default:
+		return file + " license."
+	}
+}
+
+func sameLicense(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToUpper(strings.TrimSpace(s))
+		s = strings.TrimSuffix(s, "-ONLY")
+		s = strings.TrimSuffix(s, "-OR-LATER")
+		s = strings.TrimSuffix(s, "+")
+		return s
+	}
+	a, b = norm(a), norm(b)
+	return a == b || strings.HasPrefix(a, b+"-") || strings.HasPrefix(b, a+"-") || strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+}
+
+func freeLicense(license string) (string, bool) {
+	up := strings.ToUpper(strings.TrimSpace(license))
+	for _, id := range []string{
+		"MIT", "BSD", "ISC", "APACHE", "MPL", "LGPL", "GPL", "AGPL", "UNLICENSE",
+		"0BSD", "EUPL", "CC0", "WTFPL", "ZLIB", "ARTISTIC", "EPL", "OSL",
+	} {
+		if strings.HasPrefix(up, id) {
+			return license, true
 		}
 	}
-	return append(rows, scan.Row{Fact: "open_source", Value: value, Basis: "listing", Reason: reason})
+	return "", false
 }
 
 // withoutUnbacked drops a model claim. A scanner row, basis apk, stays.
@@ -163,33 +183,6 @@ func hasFact(rows []scan.Row, fact string) bool {
 		}
 	}
 	return false
-}
-
-func freeLicense(license string) (string, bool) {
-	switch strings.ToUpper(strings.TrimSpace(license)) {
-	case "MIT":
-		return "MIT", true
-	case "BSD":
-		return "BSD", true
-	case "ISC":
-		return "ISC", true
-	case "APACHE-2.0":
-		return "Apache-2.0", true
-	case "MPL":
-		return "MPL", true
-	case "LGPL":
-		return "LGPL", true
-	case "GPL":
-		return "GPL", true
-	case "AGPL":
-		return "AGPL", true
-	case "UNLICENSE":
-		return "Unlicense", true
-	case "0BSD":
-		return "0BSD", true
-	default:
-		return "", false
-	}
 }
 
 func withoutFact(rows []scan.Row, fact string) []scan.Row {
@@ -223,9 +216,6 @@ func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 		if row.Value != "yes" {
 			continue
 		}
-		if row.Fact == "tracking" && row.Basis == "apk" && strings.TrimSpace(row.Evidence) == "" {
-			continue
-		}
 		text := cleanReason(strings.Join(strings.Fields(reason[row.Fact]), " "))
 		if text == "" || strings.Contains(text, "\n") || len(text) > 160 {
 			continue
@@ -235,6 +225,8 @@ func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 	return rows
 }
 
+// claims adds the model's e2ee where the scan has no row. tracking, ads,
+// and offline_capable come from the scan only: what the APK holds.
 func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 	have := map[string]bool{}
 	for _, row := range rows {
@@ -247,35 +239,5 @@ func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
 		rows = append(rows, scan.Row{Fact: fact, Value: value, Basis: "listing"})
 	}
 	add("e2ee", facts.E2EE)
-	add("offline_capable", facts.OfflineCapable)
-	add("open_source", facts.OpenSource)
-	if facts.Ads == "yes" {
-		add("ads", "yes")
-	}
-	if facts.Tracking == "yes" {
-		add("tracking", "yes")
-	}
 	return rows
-}
-
-// Scan reads scanner facts and an APK inventory dump from a verified APK.
-func Scan(file *apk.File) ([]scan.Row, string, error) {
-	return analyze(file)
-}
-
-func analyze(file *apk.File) ([]scan.Row, string, error) {
-	report, err := detect.Analyze(file.Path)
-	if err != nil {
-		return nil, "", err
-	}
-	return scan.FromReport(report, file.Hash), report.Project(), nil
-}
-
-// ModelConfig reads the embedder configuration and rejects a call with no provider.
-func ModelConfig() (config.Config, error) {
-	cfg := config.New()
-	if err := cfg.Validate(); err != nil {
-		return config.Config{}, err
-	}
-	return cfg, nil
 }

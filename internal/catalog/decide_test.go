@@ -94,15 +94,6 @@ func TestPlanLostAboutFileRedoes(t *testing.T) {
 	}
 }
 
-func TestBlankNoChange(t *testing.T) {
-	if !blankNoChange("no-change", "") || !blankNoChange("No-Change", "  ") {
-		t.Fatal("blank current")
-	}
-	if blankNoChange("no-change", "Wallet for cards.") || blankNoChange("A wallet.", "") {
-		t.Fatal("has text")
-	}
-}
-
 func TestPlanListingIconDoesNotDownload(t *testing.T) {
 	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "https://cdn.example/old.webp"}
 	o := observed{

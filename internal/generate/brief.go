@@ -48,10 +48,11 @@ func (f Facts) Normalize() Facts {
 
 // Lock keeps a scanner detection. The model cannot talk those down to no or unknown.
 // google_services is copied from the scan: yes when those libraries are present, no when they are absent.
-// An APK with no INTERNET permission keeps offline_capable at yes.
-// The model may still say yes when the permission is present and the app works offline.
+// offline_capable and open_source come from the scan and the listing, never the model.
 func Lock(f Facts, rows []scan.Row) Facts {
 	f = f.Normalize()
+	f.OfflineCapable = "unknown"
+	f.OpenSource = "unknown"
 	for _, row := range rows {
 		if row.Basis != "apk" {
 			continue
@@ -78,39 +79,6 @@ func Lock(f Facts, rows []scan.Row) Facts {
 		}
 	}
 	return f
-}
-
-// SecurityText is the security file: notices, a --- line, then the paragraph.
-// A no-change paragraph is left as the sentinel so the stored file stays.
-func SecurityText(paragraph string, warnings []Warning) string {
-	paragraph = strings.TrimSpace(paragraph)
-	if strings.EqualFold(paragraph, "no-change") {
-		return paragraph
-	}
-	lines := WarningsText(warnings)
-	if lines == "" {
-		return paragraph
-	}
-	if paragraph == "" {
-		return lines
-	}
-	return lines + "\n---\n" + paragraph
-}
-
-// WarningsText is the notice list. One sentence per line, with no mark.
-func WarningsText(warnings []Warning) string {
-	var b strings.Builder
-	for _, w := range warnings {
-		text := strings.TrimSpace(w.Text)
-		if text == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(text)
-	}
-	return b.String()
 }
 
 func truth(s string) string {

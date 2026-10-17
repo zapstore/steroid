@@ -15,7 +15,7 @@ func TestFactCSV(t *testing.T) {
 	if strings.Contains(got, "\"fact\",\"value\"") || !strings.HasPrefix(got, "\"google_services\",\"yes\"") {
 		t.Fatalf("header %q", got)
 	}
-	if !strings.Contains(got, "\"google_services\",\"yes\",\"no play services, com.google\"") {
+	if !strings.Contains(got, "\"google_services\",\"yes\",\"no play services. Libraries: com.google.\"") {
 		t.Fatalf("google_services row %q", got)
 	}
 	if strings.Contains(got, "skip") || strings.Contains(got, "apk") {

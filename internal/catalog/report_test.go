@@ -1,104 +1,78 @@
 package catalog
 
 import (
-	"io"
-	"os"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zapstore/steroid/artifacts"
 )
 
-func TestDebugStepPrints(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := os.Stderr
-	os.Stderr = w
-	defer func() { os.Stderr = old }()
-
-	t0 := time.Unix(0, 0)
-	times := []time.Time{
-		t0,
-		t0.Add(2 * time.Second),
-		t0.Add(2 * time.Second),
-		t0.Add(2500 * time.Millisecond),
-	}
-	var n int
-	prev := mono
-	mono = func() time.Time {
-		t := times[n]
-		n++
-		return t
-	}
-	defer func() { mono = prev }()
-
-	rep := &appReport{id: "com.example", live: true}
-	rep.step("scan")
-	rep.step("  ")
-	(&appReport{id: "com.example"}).step("scan")
-	rep.fail("apk", errString("timeout"))
-	rep.closeStep()
-	_ = w.Close()
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "com.example scan\ncom.example scan 2.0s\ncom.example fail apk: timeout\ncom.example fail apk: timeout 500ms\n" {
-		t.Fatalf("%q", raw)
+func TestWithReport(t *testing.T) {
+	ctx, text := WithReport(context.Background())
+	writeBlock(ctx, "enrich 1")
+	writeBlock(context.Background(), "other")
+	if got := text(); got != "enrich 1\n" {
+		t.Fatalf("%q", got)
 	}
 }
 
-type errString string
-
-func (e errString) Error() string { return string(e) }
-
-func TestAppReportShowsPlanOutcome(t *testing.T) {
-	rep := appReport{
-		id:      "com.example.maps",
-		version: "1.4.0",
-		plan:    planWords(work{Clone: true, Download: true, Scan: true, About: true, Security: true}),
-		ok:      []string{"clone", "apk", "scan"},
-		fails:   []string{"about: context deadline exceeded"},
+func TestDegradedStageIsDoneNotOK(t *testing.T) {
+	r := &appReport{id: "org.zerodogg.migraineLog", plan: []string{"clone", "about", "vector"}}
+	r.degrade("clone", "repository refused")
+	r.mark("about")
+	r.mark("vector")
+	r.degrade("vector", "written from the listing text")
+	if r.failed() || !r.isDegraded() {
+		t.Fatal("degraded run counted as failed")
 	}
-	got := rep.String()
-	for _, want := range []string{
-		"com.example.maps 1.4.0\n",
-		"  plan clone apk scan about security\n",
-		"  ok   clone apk scan\n",
-		"  fail about: context deadline exceeded\n",
-		"  fail security: not run\n",
-	} {
+	got := r.String()
+	for _, want := range []string{"  ok   about\n", "  degraded clone: repository refused\n", "  degraded vector: written from the listing text\n"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("missing %q\n%s", want, got)
+			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "  ok\n") {
-		t.Fatal(got)
+	if strings.Contains(got, "not run") {
+		t.Errorf("degraded stage reported as not run:\n%s", got)
 	}
 }
 
-func TestAppReportAllOk(t *testing.T) {
-	rep := appReport{
-		id:   "com.example.maps",
-		plan: planWords(work{Download: true, Scan: true}),
-		ok:   []string{"apk", "scan"},
+func TestRefusalBacksOff(t *testing.T) {
+	data := t.TempDir()
+	db, err := artifacts.Open(t.Context(), artifacts.Path(data))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := rep.String()
-	if !strings.Contains(got, "  plan apk scan\n") || !strings.Contains(got, "  ok   apk scan\n") {
-		t.Fatal(got)
+	t.Cleanup(func() { db.Close() })
+	e := &enricher{db: db}
+	rep := &appReport{}
+	const remote = "https://gitlab.com/zerodogg/org.zerodogg.migraineLog/"
+	if _, ok := e.refusedEarlier(t.Context(), remote); ok {
+		t.Fatal("refused before any try")
 	}
-	if strings.Contains(got, "fail") {
-		t.Fatal(got)
+	e.refuse(t.Context(), rep, remote, errors.New("403"))
+	first, ok := e.refusedEarlier(t.Context(), "https://GITLAB.com/zerodogg/org.zerodogg.migraineLog")
+	if !ok || first.Tries != 1 {
+		t.Fatalf("%+v %v", first, ok)
 	}
-	if rep.failed() {
-		t.Fatal("expected success")
+	e.refuse(t.Context(), rep, remote, errors.New("403"))
+	second, _ := e.refusedEarlier(t.Context(), remote)
+	if second.Tries != 2 || !second.Until.After(first.Until.Add(20*time.Hour)) {
+		t.Fatalf("no backoff: %+v then %+v", first, second)
+	}
+	e.fresh = true
+	if _, ok := e.refusedEarlier(t.Context(), remote); ok {
+		t.Fatal("--force did not ask again")
 	}
 }
 
-func TestAppReportEmptyPlan(t *testing.T) {
-	got := (&appReport{id: "com.example.maps", version: "1"}).String()
-	if got != "com.example.maps 1\n  plan none\n  ok\n" {
+func TestSummaryLine(t *testing.T) {
+	if got := summaryLine(615, 40, 3); got != "572 ok, 40 degraded, 3 failed" {
+		t.Fatal(got)
+	}
+	if got := summaryLine(5, 0, 0); got != "5 ok" {
 		t.Fatal(got)
 	}
 }

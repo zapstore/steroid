@@ -1,486 +1,333 @@
 package generate
 
 import (
-	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
-	"github.com/zapstore/steroid/internal/config"
-	"github.com/zapstore/steroid/internal/debug"
+	"github.com/zapstore/steroid/internal/llm"
 	"github.com/zapstore/steroid/internal/scan"
 )
 
-func TestChatSendsMessages(t *testing.T) {
-	var body []byte
+type served struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}
+
+// fake replies with reply(model, user message) as the assistant content.
+func fake(t *testing.T, reply func(model, user string) string) *llm.Client {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		body, err = io.ReadAll(r.Body)
-		if err != nil {
+		var req served
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	content, err := Chat(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), "m", []Message{
-		{Role: "system", Content: "system text"},
-		{Role: "user", Content: "user text"},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(content, `"about":"A map."`) {
-		t.Fatalf("%s", content)
-	}
-	sent := string(body)
-	if !strings.Contains(sent, "system text") || !strings.Contains(sent, "user text") {
-		t.Fatalf("%s", sent)
-	}
-	if strings.Contains(sent, "Bearer") || strings.Contains(sent, "\"k\"") {
-		t.Fatal("request body included the api key")
-	}
-}
-
-func TestChatDumpsPromptAndReply(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	dir := t.TempDir()
-	sink, err := debug.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := debug.With(t.Context(), sink)
-	if _, err := Chat(ctx, config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "super-secret",
-		Model:       "m",
-	}, srv.Client(), "m", []Message{
-		{Role: "system", Content: "system text"},
-		{Role: "user", Content: "user text"},
-	}, nil); err != nil {
-		t.Fatal(err)
-	}
-	prompt, err := os.ReadFile(filepath.Join(dir, "prompt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(prompt), "system text") || !strings.Contains(string(prompt), "user text") || !strings.Contains(string(prompt), "model: m") {
-		t.Fatalf("%s", prompt)
-	}
-	if strings.Contains(string(prompt), "super-secret") {
-		t.Fatal("prompt dump included the api key")
-	}
-	reply, err := os.ReadFile(filepath.Join(dir, "response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(reply), "A map.") || strings.Contains(string(reply), "super-secret") {
-		t.Fatalf("%s", reply)
-	}
-}
-
-func TestRunSummary(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/chat/completions" {
-			t.Errorf("path %s", r.URL.Path)
+		user := ""
+		if len(req.Messages) > 1 {
+			user = req.Messages[1].Content
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer k" {
-			t.Errorf("auth %s", got)
-		}
-		var req struct {
-			Model string `json:"model"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
-		}
-		if req.Model != "test-model" {
-			t.Errorf("model %s", req.Model)
-		}
-		inner, err := json.Marshal(map[string]string{
-			"about":    "Zapstore is an open Android app store.",
-			"security": "It installs packages.",
-			"facts":    "\"fact\",\"value\",\"notes\"\n\"ads\",\"yes\",\"AdMob\"\n",
+		raw, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": reply(req.Model, user)}}},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		outer, err := json.Marshal(map[string]any{
-			"choices": []any{map[string]any{"message": map[string]string{"content": string(inner)}}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = w.Write(outer)
+		_, _ = w.Write(raw)
 	}))
 	t.Cleanup(srv.Close)
+	return llm.New([]llm.Provider{{Name: "p", URL: srv.URL, Key: "k", Models: []string{"m1", "m2"}}}, srv.Client(), nil)
+}
 
-	got, err := Run(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "test-model",
-	}, srv.Client(), sampleInput())
+func sampleApp() App {
+	return App{ID: "dev.zapstore.app", Name: "Zapstore", Summary: "An open Android app store", Website: "https://zapstore.dev"}
+}
+
+func TestAboutEmptyKeepsDescription(t *testing.T) {
+	const desc = "Permissionless app store for Android, with releases signed by developers on Nostr."
+	c := fake(t, func(_, user string) string {
+		if !strings.Contains(user, "\n---\nDescription:\n"+desc+"\n") {
+			t.Errorf("description missing:\n%s", user)
+		}
+		if !strings.Contains(user, "website: Zapstore") {
+			t.Errorf("other text missing:\n%s", user)
+		}
+		return `{"about":"","keywords":["nostr"],"queries":["app store without google","sideload android apps"]}`
+	})
+	got, err := About(t.Context(), c, AboutInput{
+		App:         sampleApp(),
+		Description: desc,
+		Others:      []Text{{Source: "website", Text: "Zapstore"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got.Summary, "Zapstore is an open Android app store.") || strings.Contains(got.Summary, "No ads") {
-		t.Fatalf("got %q", got.Summary)
-	}
-	if got.Facts.Ads != "yes" {
-		t.Fatalf("facts %+v", got.Facts)
-	}
-	if got.ProviderModel != "test-model" {
-		t.Fatalf("model %q", got.ProviderModel)
-	}
-}
-
-func TestRunSummaryFencedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n{\\\"about\\\":\\\"A store.\\\",\\\"security\\\":\\\"Stays on the phone.\\\",\\\"facts\\\":\\\"no-change\\\"}\\n```\"}}]}"))
-	}))
-	t.Cleanup(srv.Close)
-
-	got, err := Run(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), sampleInput())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got.Summary, "A store.") {
-		t.Fatalf("got %q", got.Summary)
-	}
-}
-
-func TestChatFallsBackWhenPrimaryIsDown(t *testing.T) {
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer primary" {
-			t.Errorf("primary auth %s", r.Header.Get("Authorization"))
-		}
-		http.Error(w, "unavailable", http.StatusBadGateway)
-	}))
-	t.Cleanup(primary.Close)
-	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer nano" {
-			t.Errorf("fallback auth %s", r.Header.Get("Authorization"))
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
-	}))
-	t.Cleanup(fallback.Close)
-	dir := t.TempDir()
-	sink, err := debug.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := debug.With(t.Context(), sink)
-	content, err := Chat(ctx, config.Config{
-		ProviderURL: primary.URL,
-		APIKey:      "primary",
-		FallbackURL: fallback.URL,
-		FallbackKey: "nano",
-		Model:       "m",
-	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(content, "A map.") {
-		t.Fatalf("%s", content)
-	}
-	note, err := os.ReadFile(filepath.Join(dir, "fallback"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(note), "HTTP 502") || strings.Contains(string(note), "nano") {
-		t.Fatalf("%s", note)
-	}
-}
-
-func TestChatKeepsPrimaryOnBadRequest(t *testing.T) {
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "nope", http.StatusBadRequest)
-	}))
-	t.Cleanup(primary.Close)
-	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("fallback called")
-		http.Error(w, "no", http.StatusOK)
-	}))
-	t.Cleanup(fallback.Close)
-	_, err := Chat(t.Context(), config.Config{
-		ProviderURL: primary.URL,
-		APIKey:      "primary",
-		FallbackURL: fallback.URL,
-		FallbackKey: "nano",
-		Model:       "m",
-	}, primary.Client(), "m", []Message{{Role: "user", Content: "hi"}}, nil)
-	if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
-		t.Fatal(err)
-	}
-}
-
-func TestChatFallsBackWhenPrimaryRefuses(t *testing.T) {
-	primary := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	primary.Close()
-	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A map.\"}"}}]}`))
-	}))
-	t.Cleanup(fallback.Close)
-	content, err := Chat(t.Context(), config.Config{
-		ProviderURL: primary.URL,
-		APIKey:      "primary",
-		FallbackURL: fallback.URL,
-		FallbackKey: "nano",
-		Model:       "m",
-	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(content, "A map.") {
-		t.Fatalf("%s", content)
-	}
-}
-
-func TestChatDoesNotFallBackAfterCancel(t *testing.T) {
-	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("fallback called")
-	}))
-	t.Cleanup(fallback.Close)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := Chat(ctx, config.Config{
-		ProviderURL: "http://127.0.0.1:1",
-		APIKey:      "primary",
-		FallbackURL: fallback.URL,
-		FallbackKey: "nano",
-		Model:       "m",
-	}, &http.Client{}, "m", []Message{{Role: "user", Content: "hi"}}, nil)
-	if err == nil {
-		t.Fatal("expected cancel")
-	}
-}
-
-func TestRunSummaryEmptyRejected(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "nope", http.StatusBadRequest)
-	}))
-	t.Cleanup(srv.Close)
-
-	_, err := Run(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), sampleInput())
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestAssess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Messages []struct {
-				Content string `json:"content"`
-			} `json:"messages"`
-			Tools     []any `json:"tools"`
-			Reasoning struct {
-				Effort  string `json:"effort"`
-				Enabled *bool  `json:"enabled"`
-			} `json:"reasoning"`
-			Provider json.RawMessage `json:"provider"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
-		}
-		if req.Reasoning.Effort != "none" || req.Reasoning.Enabled == nil || *req.Reasoning.Enabled {
-			t.Fatalf("reasoning %+v", req.Reasoning)
-		}
-		if len(req.Provider) != 0 {
-			t.Fatalf("provider %s", req.Provider)
-		}
-		body := ""
-		if len(req.Messages) >= 2 {
-			body = req.Messages[1].Content
-		}
-		if strings.Contains(body, "Current:") || strings.Contains(body, `"about"`) || strings.Contains(body, `"security"`) {
-			t.Fatalf("empty previous sent %s", body)
-		}
-		if !strings.Contains(body, "Scan:") || !strings.Contains(body, "Listing:") || !strings.Contains(body, "Source:") {
-			t.Fatalf("record %s", body)
-		}
-		if !strings.Contains(body, "android/") {
-			t.Fatalf("missing source %s", body)
-		}
-		if !strings.Contains(body, "\"request_install_packages\",\"yes\"") || !strings.Contains(body, "REQUEST_INSTALL_PACKAGES") {
-			t.Fatalf("scan csv %s", body)
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore is an open Android app store for sideloading releases.\",\"security\":\"It can install other apps, which is expected for a store.\",\"facts\":\"no-change\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	got, err := Assess(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), sampleInput().App, []scan.Row{{
-		Fact: "request_install_packages", Value: "yes", Basis: "apk", Evidence: "REQUEST_INSTALL_PACKAGES",
-	}}, "12 text files\nandroid/\nlib/", "", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got.About, "sideloading") || !strings.Contains(got.Security, "install") {
+	if !got.Kept || got.About != desc || len(got.Queries) != 2 {
 		t.Fatalf("%+v", got)
 	}
 }
 
-func TestMissingSecurityIsRewritten(t *testing.T) {
-	var n int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
-		var req struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
+func TestAboutEmptyWithoutDescriptionTriesNextModel(t *testing.T) {
+	c := fake(t, func(model, user string) string {
+		if !strings.Contains(user, "Description:\nnone") {
+			t.Errorf("none missing:\n%s", user)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
+		if model == "m1" {
+			return `{"about":""}`
 		}
-		if n == 1 {
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A task list.\",\"security\":\"no-change\",\"facts\":\"no-change\"}"}}]}`))
-			return
-		}
-		if len(req.Messages) < 4 || !strings.Contains(req.Messages[len(req.Messages)-1].Content, "security is missing") {
-			t.Fatalf("rewrite %d %+v", n, req.Messages)
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A task list.\",\"security\":\"Data stays on the phone.\",\"facts\":\"no-change\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	got, err := Assess(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), sampleInput().App, nil, "", "", "", "")
-	if err != nil || got.Security != "Data stays on the phone." || n != 2 {
-		t.Fatalf("n=%d %+v %v", n, got, err)
-	}
-}
-
-func TestAssessIncludesWebsite(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Messages []struct {
-				Content string `json:"content"`
-			} `json:"messages"`
-			Tools []any `json:"tools"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
-		}
-		if len(req.Messages) < 2 || !strings.Contains(req.Messages[1].Content, "Website: https://zapstore.dev") {
-			t.Fatalf("website %v", req.Messages)
-		}
-		if len(req.Tools) != 0 {
-			t.Fatalf("tools %+v", req.Tools)
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"Zapstore publishes Android apps.\",\"security\":\"It can install packages.\",\"facts\":\"no-change\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	app := sampleInput().App
-	app.Website = "https://zapstore.dev/apps"
-	got, err := Assess(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), app, nil, "", "", "", "")
-	if err != nil || !strings.Contains(got.Summary, "publishes") {
+		return `{"about":"App store for Android."}`
+	})
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp()})
+	if err != nil || got.About != "App store for Android." || got.Kept || got.Model != "m2" {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
 
-func TestAssessEmptySheetStillWrites(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"about\":\"A calculator.\",\"security\":\"Uses the network.\",\"facts\":\"no-change\"}"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	got, err := Assess(t.Context(), config.Config{
-		ProviderURL: srv.URL,
-		APIKey:      "k",
-		Model:       "m",
-	}, srv.Client(), sampleInput().App, nil, "", "", "", "")
-	if err != nil || !strings.Contains(got.Summary, "calculator") {
+func TestAboutWritesWhenDescriptionIsRejected(t *testing.T) {
+	c := fake(t, func(_, _ string) string {
+		return `{"about":"App store for Android, with releases signed by developers."}`
+	})
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp(), Description: "The best store."})
+	if err != nil || got.Kept || got.About != "App store for Android, with releases signed by developers." {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
 
-func TestReplyRejectsOtherBuild(t *testing.T) {
-	cases := []string{
-		"This build uses Google Play services and Firebase Cloud Messaging, which can send device data off the phone. While the app is open source and decentralized on Nostr, the standard variant relies on centralized push infrastructure.",
-		"The FCM push component in standard builds links Firebase, which can send data off the phone. The FOSS variant avoids this by using UnifiedPush.",
-	}
-	for _, security := range cases {
-		if _, err := Reply("Sends mail.", security, "", "", nil); err == nil {
-			t.Fatalf("accepted %q", security)
-		}
-	}
-	notes, err := Reply("Sends mail.", "Firebase can send data off the phone.", "no-change", "", nil)
-	if err != nil || notes.Security != "Firebase can send data off the phone." {
-		t.Fatalf("%+v %v", notes, err)
+func TestAboutUsesUnverifiedTextWhenNoModelVerifies(t *testing.T) {
+	var calls atomic.Int32
+	c := fake(t, func(model, _ string) string {
+		calls.Add(1)
+		return `{"about":"Blazing fast revolutionary store."}`
+	})
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp(), Verify: func(string) error { return errors.New("invented") }})
+	if err != nil || got.Degraded == "" || got.About != "Blazing fast revolutionary store." || calls.Load() != 2 {
+		t.Fatalf("%+v %v calls %d", got, err, calls.Load())
 	}
 }
 
-func TestMessageBlocksAndNoChangeFacts(t *testing.T) {
-	app := App{Name: "Chat", Summary: "Sends messages.", Website: "https://chat.example"}
-	prev := "\"fact\",\"value\",\"notes\"\n\"microphone\",\"yes\",\"the record button records audio\"\n"
-	body := Record(app, nil, "Uses:\n", "Sends messages.", "Needs a server login.")
-	if !strings.Contains(body, "Current:\n") || !strings.Contains(body, `"about":"Sends messages."`) || strings.Contains(body, `"facts"`) {
-		t.Fatalf("current %s", body)
+func TestAboutPrefersVerifiedText(t *testing.T) {
+	c := fake(t, func(model, _ string) string {
+		if model == "m1" {
+			return `{"about":"Blazing fast revolutionary store."}`
+		}
+		return `{"about":"App store for Android."}`
+	})
+	verify := func(about string) error {
+		if strings.Contains(about, "revolutionary") {
+			return errors.New("invented")
+		}
+		return nil
 	}
-	fresh := Record(app, nil, "", "", "")
-	if strings.Contains(fresh, "Current:") || strings.Contains(fresh, `"about"`) || strings.Contains(fresh, `"security"`) || !strings.Contains(fresh, "about: write the paragraph") || !strings.Contains(fresh, "security: write the summary") || !strings.Contains(fresh, "Scan:\n") {
-		t.Fatalf("empty current %s", fresh)
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp(), Verify: verify})
+	if err != nil || got.Degraded != "" || got.About != "App store for Android." || got.Model != "m2" {
+		t.Fatalf("%+v %v", got, err)
 	}
-	partial := Record(app, nil, "", "Sends messages.", "")
-	if !strings.Contains(partial, `"about":"Sends messages."`) || strings.Contains(partial, `"security"`) || strings.Contains(partial, "about: write the paragraph") || !strings.Contains(partial, "security: write the summary") {
-		t.Fatalf("partial %s", partial)
+}
+
+func TestAboutKeepsDescriptionWhenEveryReplyIsUnusable(t *testing.T) {
+	const desc = "Permissionless app store for Android, with releases signed by developers on Nostr."
+	c := fake(t, func(_, _ string) string { return `not json` })
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp(), Description: desc})
+	if err != nil || !got.Kept || got.About != desc || got.Degraded == "" {
+		t.Fatalf("%+v %v", got, err)
 	}
-	if !strings.Contains(body, "\n---\nScan:\n\"fact\",\"value\",\"notes\"\n") || !strings.Contains(body, "\n---\nListing:\n# Chat\n") || !strings.Contains(body, "Website: https://chat.example") || !strings.Contains(body, "\n---\nSource:\nUses:\n") {
-		t.Fatalf("blocks %s", body)
+}
+
+func TestAboutIgnoresVerdictMismatch(t *testing.T) {
+	const desc = "Permissionless app store for Android, with releases signed by developers on Nostr."
+	c := fake(t, func(_, _ string) string { return `{"verdict":"write: a slogan","about":""}` })
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp(), Description: desc})
+	if err != nil || !got.Kept || got.Model != "m1" {
+		t.Fatalf("%+v %v", got, err)
 	}
+}
+
+func TestAboutRejectsOtherBuild(t *testing.T) {
+	c := fake(t, func(model, _ string) string {
+		if model == "m1" {
+			return `{"about":"An open-source store, also on F-Droid."}`
+		}
+		return `{"about":"App store for Android."}`
+	})
+	got, err := About(t.Context(), c, AboutInput{App: sampleApp()})
+	if err != nil || got.Model != "m2" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestSecurityRecordAndLock(t *testing.T) {
+	c := fake(t, func(_, user string) string {
+		for _, want := range []string{
+			"security: write the summary",
+			"\n---\nScan:\n",
+			"\"request_install_packages\",\"yes\"",
+			"\n---\nListing:\n# Zapstore\n",
+			"\n---\nSource:\n12 files\n",
+		} {
+			if !strings.Contains(user, want) {
+				t.Errorf("missing %q in\n%s", want, user)
+			}
+		}
+		return `{"security":"It can install other apps, which is expected for a store.","facts":"\"request_install_packages\",\"yes\",\"REQUEST_INSTALL_PACKAGES installs releases from the store screen.\"\n\"offline_capable\",\"yes\",\"works offline\"\n\"open_source\",\"yes\",\"MIT\""}`
+	})
+	got, err := Security(t.Context(), c, SecurityInput{
+		App:    sampleApp(),
+		Sheet:  []scan.Row{{Fact: "request_install_packages", Value: "yes", Basis: "apk", Evidence: "REQUEST_INSTALL_PACKAGES"}},
+		Source: "12 files",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Security, "install") || !strings.HasPrefix(got.Reason["request_install_packages"], "REQUEST_INSTALL_PACKAGES") {
+		t.Fatalf("%+v", got)
+	}
+	if got.Facts.OfflineCapable == "yes" || got.Facts.OpenSource == "yes" {
+		t.Fatalf("model set a closed fact %+v", got.Facts)
+	}
+}
+
+func TestSecurityNoChangeNeedsCurrent(t *testing.T) {
+	c := fake(t, func(model, _ string) string {
+		if model == "m1" {
+			return `{"security":"no-change","facts":"no-change"}`
+		}
+		return `{"security":"Data stays on the phone.","facts":""}`
+	})
+	got, err := Security(t.Context(), c, SecurityInput{App: sampleApp()})
+	if err != nil || got.Security != "Data stays on the phone." {
+		t.Fatalf("%+v %v", got, err)
+	}
+	kept := fake(t, func(_, user string) string {
+		if !strings.Contains(user, `Current:`+"\n"+`{"security":"Stored."}`) {
+			t.Errorf("current missing %s", user)
+		}
+		return `{"security":"no-change","facts":"no-change"}`
+	})
+	prev := "\"microphone\",\"yes\",\"RECORD_AUDIO records voice notes.\"\n"
+	got, err = Security(t.Context(), kept, SecurityInput{App: sampleApp(), Current: "Stored.", PrevFacts: prev})
+	if err != nil || got.Security != "no-change" || got.Reason["microphone"] != "RECORD_AUDIO records voice notes." {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestThisAPKRejectsOtherBuild(t *testing.T) {
+	for _, text := range []string{
+		"The standard variant relies on centralized push infrastructure.",
+		"The FOSS variant avoids this by using UnifiedPush.",
+		"Available on the Play Store.",
+	} {
+		if thisAPK("", text) == nil {
+			t.Fatalf("accepted %q", text)
+		}
+	}
+	if err := thisAPK("Sends mail.", "Firebase can send data off the phone."); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPitchRejectsAppDescription(t *testing.T) {
+	app := App{Name: "Pollerama", Summary: "Polls, notes and movie ratings on Nostr."}
+	for _, text := range []string{
+		"Pollerama is a decentralized social platform built on the Nostr protocol. It allows users to create notes, polls, and rate movies without relying on centralized intermediaries.",
+		"Pollerama sends votes to relays.",
+		"A social app for polls.",
+		"It lets users rate movies.",
+		"Polls, notes and movie ratings on Nostr.",
+	} {
+		if Pitch(text, app) == nil {
+			t.Errorf("accepted %q", text)
+		}
+	}
+	for _, text := range []string{
+		"Notes, votes, and ratings are signed on the phone and sent to the relays you pick.",
+		"The camera scans a QR code to import a key.\n\nEverything else stays on the phone.",
+		"no-change",
+	} {
+		if err := Pitch(text, app); err != nil {
+			t.Errorf("rejected %q: %v", text, err)
+		}
+	}
+}
+
+func TestSecurityNoChangeRejectsStoredPitch(t *testing.T) {
+	c := fake(t, func(model, _ string) string {
+		if model == "m1" {
+			return `{"security":"no-change","facts":""}`
+		}
+		return `{"security":"Votes are sent to the relays you pick.","facts":""}`
+	})
+	got, err := Security(t.Context(), c, SecurityInput{App: sampleApp(), Current: "Zapstore is an open app store."})
+	if err != nil || got.Model != "m2" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestParseSheetSentinel(t *testing.T) {
 	facts, reasons, noChange, err := ParseSheet("no-change")
 	if err != nil || !noChange || facts.OfflineCapable != "" || len(reasons) != 0 {
-		t.Fatalf("sentinel %+v %v %v", facts, reasons, err)
-	}
-	notes, err := Reply("Kept.", "no-change", "no-change", prev, nil)
-	if err != nil || notes.Reason["microphone"] != "the record button records audio" {
-		t.Fatalf("%+v %v", notes, err)
-	}
-	if _, err := Reply("", "Stays on the phone.", "no-change", prev, nil); err == nil {
-		t.Fatal("empty about")
-	}
-	if _, err := Reply("A wallet.", "", "no-change", prev, nil); err == nil {
-		t.Fatal("empty security")
-	}
-	if _, err := Reply("A wallet.", "Stays on the phone.", "", prev, nil); err == nil {
-		t.Fatal("empty facts")
+		t.Fatalf("%+v %v %v", facts, reasons, err)
 	}
 }
 
-func sampleInput() Input {
-	return Input{
-		App: App{
-			ID:      "dev.zapstore.app",
-			Name:    "Zapstore",
-			Summary: "An open Android app store",
-		},
-		Sheet: nil,
+func TestSecurityRejectsGoogleWhenScanFoundNone(t *testing.T) {
+	sheet := []scan.Row{
+		{Fact: "google_services", Value: "no", Basis: "apk"},
+		{Fact: "camera", Value: "yes", Basis: "apk", Evidence: "CAMERA"},
+	}
+	c := fake(t, func(model, _ string) string {
+		switch model {
+		case "m1":
+			return `{"security":"Push tokens go to Google and the app's server.","facts":""}`
+		default:
+			return `{"security":"The camera takes photos for posts.","facts":"\"camera\",\"yes\",\"CAMERA takes photos.\""}`
+		}
+	})
+	got, err := Security(t.Context(), c, SecurityInput{App: sampleApp(), Sheet: sheet})
+	if err != nil || got.Model != "m2" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	both := fake(t, func(_, _ string) string {
+		return `{"security":"The camera takes photos.","facts":"\"camera\",\"yes\",\"CAMERA photos are sent through Firebase.\""}`
+	})
+	if _, err := Security(t.Context(), both, SecurityInput{App: sampleApp(), Sheet: sheet}); err == nil || !strings.Contains(err.Error(), "no Google services") {
+		t.Fatalf("note accepted: %v", err)
+	}
+}
+
+func TestSecurityAllowsGoogleWhenScanFoundIt(t *testing.T) {
+	sheet := []scan.Row{{Fact: "google_services", Value: "yes", Basis: "apk", Evidence: "Firebase Cloud Messaging: Firebase"}}
+	c := fake(t, func(_, _ string) string {
+		return `{"security":"Push tokens go to Google.","facts":""}`
+	})
+	if _, err := Security(t.Context(), c, SecurityInput{App: sampleApp(), Sheet: sheet}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSecurityRejectsTrackerTalkWithoutTrackingRow(t *testing.T) {
+	sheet := []scan.Row{{Fact: "google_services", Value: "yes", Basis: "apk", Evidence: "Firebase Cloud Messaging: Firebase"}}
+	c := fake(t, func(_, _ string) string {
+		return `{"security":"Firebase analytics sends usage to Google.","facts":""}`
+	})
+	if _, err := Security(t.Context(), c, SecurityInput{App: sampleApp(), Sheet: sheet}); err == nil || !strings.Contains(err.Error(), "no tracking library") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestSecurityAdWordsNeedWholeWords(t *testing.T) {
+	c := fake(t, func(_, _ string) string {
+		return `{"security":"It can add an account and read the address book.","facts":""}`
+	})
+	if _, err := Security(t.Context(), c, SecurityInput{App: sampleApp()}); err != nil {
+		t.Fatal(err)
+	}
+	ads := fake(t, func(_, _ string) string {
+		return `{"security":"It shows ads from a network.","facts":""}`
+	})
+	if _, err := Security(t.Context(), ads, SecurityInput{App: sampleApp()}); err == nil {
+		t.Fatal("ads accepted without an ads row")
 	}
 }

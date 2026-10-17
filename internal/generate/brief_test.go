@@ -2,30 +2,10 @@ package generate
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/zapstore/steroid/internal/scan"
 )
-
-func TestSecurityLeadsWithWarning(t *testing.T) {
-	got := WarningsText([]Warning{{
-		Text: "Posts contacts.", Evidence: "lib/a.kt:3: send(contacts)",
-	}})
-	if got != "Posts contacts." {
-		t.Fatalf("%q", got)
-	}
-	file := SecurityText("A calculator can receive SMS.", []Warning{{Text: "Posts contacts."}})
-	if file != "Posts contacts.\n---\nA calculator can receive SMS." {
-		t.Fatalf("%q", file)
-	}
-	if SecurityText("no-change", []Warning{{Text: "Posts contacts."}}) != "no-change" {
-		t.Fatal("sentinel")
-	}
-	if strings.Contains(got, "lib/a.kt") || strings.Contains(got, "Works offline") {
-		t.Fatalf("evidence or facts leaked %q", got)
-	}
-}
 
 func TestLockKeepsScannerYes(t *testing.T) {
 	got := Lock(Facts{GoogleServices: "no", Ads: "no", OfflineCapable: "no"}, []scan.Row{
@@ -42,7 +22,7 @@ func TestLockKeepsScannerYes(t *testing.T) {
 	if absent.GoogleServices != "no" {
 		t.Fatalf("%+v", absent)
 	}
-	if claimed := Lock(Facts{OfflineCapable: "yes"}, nil); claimed.OfflineCapable != "yes" {
+	if claimed := Lock(Facts{OfflineCapable: "yes"}, nil); claimed.OfflineCapable == "yes" {
 		t.Fatalf("offline claim without a scanner row %+v", claimed)
 	}
 }

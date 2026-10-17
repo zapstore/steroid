@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestEnrichCacheHitSkipsNetwork(t *testing.T) {
 	if err := db.SetAbout(t.Context(), id, "sum"); err != nil {
 		t.Fatal(err)
 	}
-	body := securityFile("\"google_services\",\"no\"\n\"offline_capable\",\"yes\"", "", "prose", nil)
+	body := securityFile("\"google_services\",\"no\"\n\"offline_capable\",\"yes\"", "", "prose", nil, nil)
 	if err := db.SetSecurity(t.Context(), id, body); err != nil {
 		t.Fatal(err)
 	}
@@ -158,5 +159,11 @@ func TestEnrichFailedDownloadDoesNotCacheAPK(t *testing.T) {
 	}
 	if after.Memo.APK != "" || after.Memo.Feature != "" || after.Memo.Facts != "" {
 		t.Fatalf("cached a failed run: %+v", after.Memo)
+	}
+}
+
+func TestReplyKeyCarriesVersion(t *testing.T) {
+	if got := replyKey("abc"); got != fmt.Sprintf("v%d:abc", enrichVersion) {
+		t.Fatal(got)
 	}
 }

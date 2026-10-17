@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zapstore/steroid/internal/flags"
 	"github.com/zapstore/steroid/internal/scan"
 )
 
 func TestSecurityFileIsJSON(t *testing.T) {
 	csv := "\"google_services\",\"no\"\n\"tracking\",\"yes\",\"Firebase Analytics sends usage.\"\n\"offline_capable\",\"no\"\n\"camera\",\"yes\",\"CAMERA. The shutter has no shown use.\"\n\"ads\",\"no\""
 	keywords := acceptKeywords([]string{"Nostr", "app"}, "A Nostr client")
-	body := securityFile(csv, "CAMERA, INTERNET, ACCESS_BACKGROUND_LOCATION", "Contacts leave the phone.\n\nInternet is used to fetch video data.", keywords)
+	body := securityFile(csv, "CAMERA, INTERNET, ACCESS_BACKGROUND_LOCATION", "Contacts leave the phone.\n\nInternet is used to fetch video data.", keywords, []flags.Flag{{ID: flags.NoEnglish, Note: "No English."}})
 	var doc securityJSON
 	if err := json.Unmarshal([]byte(body), &doc); err != nil {
 		t.Fatal(err)
@@ -43,7 +44,14 @@ func TestSecurityFileIsJSON(t *testing.T) {
 	if len(doc.Keywords) != 1 || doc.Keywords[0] != "nostr" {
 		t.Fatal(doc.Keywords)
 	}
-	csvOut, perms, prose, keywords := storedParts(body)
+	if len(doc.Flags) != 1 || doc.Flags[0].ID != flags.NoEnglish {
+		t.Fatal(doc.Flags)
+	}
+	stored := storedParts(body)
+	csvOut, perms, prose, keywords := stored.CSV, stored.Perms, stored.Prose, stored.Keywords
+	if len(stored.Flags) != 1 {
+		t.Fatal(stored.Flags)
+	}
 	if !strings.Contains(csvOut, `"tracking","yes"`) || perms != "CAMERA, INTERNET" {
 		t.Fatalf("csv %s perms %q", csvOut, perms)
 	}
@@ -57,7 +65,8 @@ func TestSecurityFileIsJSON(t *testing.T) {
 
 func TestOldSecurityFileStillReads(t *testing.T) {
 	text := "\"offline_capable\",\"yes\",\"No INTERNET\"\n\"google_services\",\"no\"\n---\nCAMERA, INTERNET\n---\nInternet is used to fetch video data."
-	csv, perms, prose, keywords := storedParts(text)
+	stored := storedParts(text)
+	csv, perms, prose, keywords := stored.CSV, stored.Perms, stored.Prose, stored.Keywords
 	if !strings.Contains(csv, "offline_capable") || perms != "CAMERA, INTERNET" || prose != "Internet is used to fetch video data." {
 		t.Fatalf("csv %s perms %q prose %q", csv, perms, prose)
 	}
@@ -72,31 +81,17 @@ func TestOldSecurityFileStillReads(t *testing.T) {
 	}
 }
 
-func TestMarkClosedSource(t *testing.T) {
-	body := securityFile("\"google_services\",\"no\"\n\"open_source\",\"yes\",\"MIT\"\n", "INTERNET", "Reads the network.", nil)
-	got := markClosedSource(body)
+func TestSourceAvailableKeepsNoteWhenFalse(t *testing.T) {
+	body := securityFile("\"google_services\",\"no\"\n\"source_available\",\"no\",\"No repository is listed.\"\n", "", "", nil, nil)
 	var doc securityJSON
-	if err := json.Unmarshal([]byte(got), &doc); err != nil {
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Facts["open_source"] || doc.Facts["google_services"] {
+	if yes, ok := doc.Facts["source_available"]; !ok || yes {
 		t.Fatalf("facts %#v", doc.Facts)
 	}
-	if _, ok := doc.Facts["open_source"]; !ok {
-		t.Fatal("open_source missing")
-	}
-	if doc.Body != "Reads the network." || strings.Join(doc.Permissions, ",") != "INTERNET" {
-		t.Fatalf("body %q perms %v", doc.Body, doc.Permissions)
-	}
-	if markClosedSource(got) != got {
-		t.Fatal("closed text was rewritten")
-	}
-	empty := markClosedSource("")
-	if err := json.Unmarshal([]byte(empty), &doc); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := doc.Facts["open_source"]; !ok || doc.Facts["open_source"] {
-		t.Fatalf("empty facts %#v", doc.Facts)
+	if doc.Notes["source_available"] != "No repository is listed." {
+		t.Fatal(doc.Notes)
 	}
 }
 

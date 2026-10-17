@@ -4,7 +4,10 @@ import "strings"
 
 // enrichVersion is the enrichment generation stored in each app cache.
 // Bump it when cached about, security, facts, or vectors should be redone.
-const enrichVersion = 1
+// It is also part of the model reply cache key and the stored tree names,
+// so a bumped app asks the model and clones again. Apps are redone as they
+// are next enriched, not all at once.
+const enrichVersion = 3
 
 // aboutSkipped is a legacy cache value. A missing about file is redone even when the cache says this.
 const aboutSkipped = "skipped"
