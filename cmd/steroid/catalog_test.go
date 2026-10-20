@@ -1,20 +1,22 @@
 package main
 
 import (
-	"path/filepath"
+	"errors"
 	"testing"
 )
 
 func TestDataPaths(t *testing.T) {
-	t.Setenv("SYSTEM_DIRECTORY_PATH", "")
-	data, db := dataPaths()
-	if data != filepath.Join(".", "data") || db != filepath.Join(".", "data", "relay.db") {
-		t.Fatalf("default data %s db %s", data, db)
+	t.Setenv("DATA_DIR", "")
+	if _, _, err := dataPaths(); !errors.Is(err, errNoDataDir) {
+		t.Fatalf("unset DATA_DIR: err %v, want %v", err, errNoDataDir)
 	}
 
-	t.Setenv("SYSTEM_DIRECTORY_PATH", "/var/zapstore")
-	data, db = dataPaths()
-	if data != "/var/zapstore/data" || db != "/var/zapstore/data/relay.db" {
-		t.Fatalf("root data %s db %s", data, db)
+	t.Setenv("DATA_DIR", "/var/lib/zapstore/relay")
+	data, db, err := dataPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data != "/var/lib/zapstore/relay" || db != "/var/lib/zapstore/relay/relay.db" {
+		t.Fatalf("data %s db %s", data, db)
 	}
 }

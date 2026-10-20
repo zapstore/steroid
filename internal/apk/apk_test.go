@@ -67,46 +67,7 @@ func TestFetchRejectsLargeBody(t *testing.T) {
 	}
 }
 
-func TestFetchWritesAPKCache(t *testing.T) {
-	allowTestURL(t)
-	const body = "apk-bytes"
-	sum := sha256.Sum256([]byte(body))
-	hash := hex.EncodeToString(sum[:])
-	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(srv.Close)
-	cache := t.TempDir()
-	t.Setenv("APK_CACHE", cache)
-	t.Setenv("BLOSSOM_URL", srv.URL)
-	got, err := Fetch(t.Context(), srv.URL, hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := got.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(got.Path); !os.IsNotExist(err) {
-		t.Fatal("download temp was kept")
-	}
-	cached := filepath.Join(cache, hash)
-	if raw, err := os.ReadFile(cached); err != nil || string(raw) != body {
-		t.Fatalf("cache %q %v", raw, err)
-	}
-	hits = 0
-	opened, err := Open(t.Context(), hash, srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = opened.Close() })
-	if opened.Path != cached || hits != 0 || !opened.Persistent() {
-		t.Fatalf("path %s hits %d persistent %v", opened.Path, hits, opened.Persistent())
-	}
-}
-
-func TestOpenReadsCacheThenBlossomThenURL(t *testing.T) {
+func TestOpenReadsBlobThenBlossomThenURL(t *testing.T) {
 	allowTestURL(t)
 	const body = "apk-bytes"
 	sum := sha256.Sum256([]byte(body))
@@ -126,29 +87,33 @@ func TestOpenReadsCacheThenBlossomThenURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("BLOSSOM_URL", srv.URL)
-	t.Setenv("APK_CACHE", t.TempDir())
 
-	cache := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cache, hash), []byte(body), 0o644); err != nil {
+	data := t.TempDir()
+	blobs := filepath.Join(data, "blossom", "blobs")
+	if err := os.MkdirAll(blobs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("APK_CACHE", cache)
-	got, err := Open(t.Context(), strings.ToUpper(hash), srv.URL+"/asset")
+	if err := os.WriteFile(filepath.Join(blobs, hash+".apk"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(t.Context(), data, strings.ToUpper(hash), srv.URL+"/asset")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !got.Persistent() {
+		t.Fatal("relay blob is not persistent")
 	}
 	if err := got.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(got.Path); err != nil {
-		t.Fatal("cache file was removed")
+		t.Fatal("relay blob was removed")
 	}
 	if len(hits) != 0 {
-		t.Fatalf("cache miss hit %v", hits)
+		t.Fatalf("blob hit fetched %v", hits)
 	}
 
-	t.Setenv("APK_CACHE", t.TempDir())
-	got, err = Open(t.Context(), hash, "")
+	got, err = Open(t.Context(), t.TempDir(), hash, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,14 +123,13 @@ func TestOpenReadsCacheThenBlossomThenURL(t *testing.T) {
 	}
 
 	hits = nil
-	t.Setenv("APK_CACHE", t.TempDir())
 	t.Setenv("BLOSSOM_URL", srv.URL+"/missing")
 	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits = append(hits, "asset")
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(asset.Close)
-	got, err = Open(t.Context(), hash, asset.URL)
+	got, err = Open(t.Context(), t.TempDir(), hash, asset.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

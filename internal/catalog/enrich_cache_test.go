@@ -117,7 +117,6 @@ func TestListingInputKeepsAssetCommit(t *testing.T) {
 }
 
 func TestEnrichFailedDownloadDoesNotCacheAPK(t *testing.T) {
-	t.Setenv("APK_CACHE", t.TempDir())
 	t.Setenv("BLOSSOM_URL", "https://127.0.0.1")
 	t.Setenv("LLM_URL", "")
 	t.Setenv("LLM_API_KEY", "")

@@ -18,13 +18,13 @@ import (
 	"time"
 
 	"github.com/zapstore/steroid/artifacts"
+	"github.com/zapstore/steroid/encode"
 	"github.com/zapstore/steroid/internal/about"
 	"github.com/zapstore/steroid/internal/apk"
 	"github.com/zapstore/steroid/internal/config"
 	"github.com/zapstore/steroid/internal/debug"
 	"github.com/zapstore/steroid/internal/detect"
 	"github.com/zapstore/steroid/internal/doc"
-	"github.com/zapstore/steroid/internal/encode"
 	"github.com/zapstore/steroid/internal/flags"
 	"github.com/zapstore/steroid/internal/generate"
 	"github.com/zapstore/steroid/internal/llm"
@@ -619,7 +619,7 @@ func (e *enricher) openAPK(ctx context.Context, rep *appReport, path string, in 
 		return nil, err
 	}
 	defer release()
-	return openAPK(ctx, path, in)
+	return openAPK(ctx, e.data, path, in)
 }
 
 // siteMeta reads the website description. A failure only loses one candidate.
@@ -854,11 +854,11 @@ func tempAPK() (string, error) {
 	return path, nil
 }
 
-func openAPK(ctx context.Context, path string, in run.Input) (*apk.File, error) {
+func openAPK(ctx context.Context, data, path string, in run.Input) (*apk.File, error) {
 	if sameFileHash(path, in.APKHash) {
 		return &apk.File{Path: path, Hash: strings.ToLower(strings.TrimSpace(in.APKHash))}, nil
 	}
-	file, err := apk.Open(ctx, in.APKHash, in.URL)
+	file, err := apk.Open(ctx, data, in.APKHash, in.URL)
 	if err != nil {
 		return nil, err
 	}

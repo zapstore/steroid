@@ -22,7 +22,7 @@ func main() {
 		return
 	}
 	fs := flag.NewFlagSet("steroid", flag.ExitOnError)
-	debug := fs.Bool("debug", false, "log each step, and write prompt and response under data/debug/<app-id>")
+	debug := fs.Bool("debug", false, "log each step, and write prompt and response under DATA_DIR/debug/<app-id>")
 	force := fs.Bool("force", false, "delete the app row and skip cached model replies, trees, and websites")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: steroid -v\n")

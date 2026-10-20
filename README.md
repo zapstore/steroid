@@ -49,9 +49,9 @@ Only `train` is exported. Tune prompts and checks against `dev`. Run `test` to c
 
 ## Environment
 
-Reads `.env` from the working directory. A variable already set in the process wins.
+Reads `.env` from the working directory. A variable already set in the process wins. Every variable is in [`.env.example`](.env.example).
 
-`SYSTEM_DIRECTORY_PATH` defaults to `.`. Listings are read from `<root>/data/relay.db`. Artifacts are written to `<root>/data/artifacts.db`. `--debug` writes under `<root>/data/debug/<app-id>/`.
+`DATA_DIR` is required: the relay's data directory. Listings are read from `DATA_DIR/relay.db`. Artifacts are written to `DATA_DIR/artifacts.db`. `--debug` writes under `DATA_DIR/debug/<app-id>/`.
 
 Remote model, all `LLM_`. `LLM_URL` is the API root. `LLM_MODEL` is required: first entry, then comma-separated fallbacks on that provider. `LLM_FALLBACK_URL` and `LLM_FALLBACK_API_KEY` are both set or both absent.
 
@@ -64,12 +64,11 @@ Local vector model, separate from `LLM_*`.
 
 | Variable | Default |
 |---|---|
-| `LEAF_MODEL_DIR` | `.tools/leaf-ir-v1` |
-| `ONNXRUNTIME_LIB` | the library under `.tools` |
+| `LEAF_MODEL_DIR` | `DATA_DIR/models/leaf-ir-v1`, downloaded on first use |
+| `ONNXRUNTIME_LIB` | downloaded next to the model |
 
-Shared with `zsp`. Same names, same meaning.
+An APK is read from the relay's blob, `DATA_DIR/blossom/blobs/<sha256>.apk`, when it is there: in the buffer zone, or always when the relay runs without Bunny. Otherwise it is fetched from `BLOSSOM_URL/<sha256>`, then from the asset URL.
 
 | Variable | Default |
 |---|---|
-| `APK_CACHE` | unset: do not read or write the cache |
 | `BLOSSOM_URL` | `https://cdn.zapstore.dev` |

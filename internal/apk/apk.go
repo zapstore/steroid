@@ -45,7 +45,7 @@ type File struct {
 	remove bool
 }
 
-// Close deletes a downloaded APK. A copied or cached file is left in place.
+// Close deletes a downloaded APK. A relay blob is left in place.
 func (f *File) Close() error {
 	if f == nil || !f.remove {
 		return nil
@@ -55,17 +55,18 @@ func (f *File) Close() error {
 }
 
 // Persistent reports whether Close leaves the file in place.
-// A cache hit is persistent. A download is not.
+// A relay blob is persistent. A download is not.
 func (f *File) Persistent() bool {
 	return f != nil && !f.remove
 }
 
-// Open returns the APK for hash. It reads APK_CACHE/<hash> first, the same
-// directory zsp writes. A miss fetches BLOSSOM_URL/<hash>, which redirects
-// to Bunny, and then rawURL.
-func Open(ctx context.Context, hash, rawURL string) (*File, error) {
+// Open returns the APK for hash. It reads the relay's local blob first:
+// <data>/blossom/blobs/<hash>.apk, present in the buffer zone or when the
+// relay runs without Bunny. A miss fetches BLOSSOM_URL/<hash>, which
+// redirects to Bunny, and then rawURL.
+func Open(ctx context.Context, data, hash, rawURL string) (*File, error) {
 	hash = strings.ToLower(strings.TrimSpace(hash))
-	if file, ok := openCache(hash); ok {
+	if file, ok := openBlob(data, hash); ok {
 		return file, nil
 	}
 	var blossomErr error
@@ -85,12 +86,11 @@ func Open(ctx context.Context, hash, rawURL string) (*File, error) {
 	return Fetch(ctx, rawURL, hash)
 }
 
-func openCache(hash string) (*File, bool) {
-	dir := strings.TrimSpace(os.Getenv("APK_CACHE"))
-	if dir == "" || !sha256Hex(hash) {
+func openBlob(data, hash string) (*File, bool) {
+	if data == "" || !sha256Hex(hash) {
 		return nil, false
 	}
-	path := filepath.Join(dir, hash)
+	path := filepath.Join(data, "blossom", "blobs", hash+".apk")
 	if !sameHash(path, hash) {
 		return nil, false
 	}
@@ -187,55 +187,7 @@ func fetch(ctx context.Context, rawURL, wantHash string) (*File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("apk hash %s != %s", got, want)
 	}
-	if err := retain(file.Path, got); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
 	return file, nil
-}
-
-// retain copies a verified APK to APK_CACHE/<hash>. An unset APK_CACHE copies nothing.
-func retain(path, hash string) error {
-	dir := strings.TrimSpace(os.Getenv("APK_CACHE"))
-	if dir == "" || !sha256Hex(hash) {
-		return nil
-	}
-	dest := filepath.Join(dir, hash)
-	if sameHash(dest, hash) {
-		return nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	in, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp, err := os.CreateTemp(dir, ".partial-")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := io.Copy(tmp, in); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, dest); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
 }
 
 func publicHTTPS(raw string) error {
