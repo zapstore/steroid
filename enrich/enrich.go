@@ -15,6 +15,12 @@ func Matching(ctx context.Context, data, dbPath, modelDir, appID string, debug, 
 	return catalog.EnrichMatching(ctx, data, dbPath, modelDir, appID, debug, force)
 }
 
+// Images fetches icons and author avatars. An empty filter is every listing.
+// It does not clone, scan, or call the model.
+func Images(ctx context.Context, data, dbPath, filter string, debug bool) error {
+	return catalog.EnrichImages(ctx, data, dbPath, filter, debug)
+}
+
 // WithReport keeps a copy of the enricher report written during ctx.
 func WithReport(ctx context.Context) (context.Context, func() string) {
 	return catalog.WithReport(ctx)
@@ -23,6 +29,12 @@ func WithReport(ctx context.Context) (context.Context, func() string) {
 // IDs enriches the listings with those app ids. A cache that already matches the listing does nothing.
 func IDs(ctx context.Context, data, dbPath string, ids []string) error {
 	return catalog.EnrichIDs(ctx, data, dbPath, ModelDir(data), ids)
+}
+
+// Listing enriches one admitted listing before the relay lists it. picture is
+// its author's profile picture. A cache that already matches the listing does nothing.
+func Listing(ctx context.Context, data string, listing catalog.Listing, picture string) error {
+	return catalog.EnrichListing(ctx, data, ModelDir(data), listing, picture)
 }
 
 // Filter enriches listings whose app id contains filter.

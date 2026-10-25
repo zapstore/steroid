@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,8 +27,9 @@ const parallelJobs = 8
 
 const preferredABI = "android-arm64-v8a"
 
-// EnrichMatching enriches listings whose app id contains filter.
-// It reads those listings from the relay database. It does not write a snapshot or a bundle.
+// EnrichMatching enriches listings whose app id contains filter and whose
+// app event includes an f tag android-arm64-v8a. It reads those listings
+// from the relay database. It does not write a snapshot or a bundle.
 func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, debug, force bool) error {
 	filter = strings.TrimSpace(filter)
 	if filter == "" {
@@ -37,8 +39,9 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 	if err != nil {
 		return err
 	}
+	listings = androidListings(listings)
 	if len(listings) == 0 {
-		return fmt.Errorf("no listings match %q", filter)
+		return fmt.Errorf("no android-arm64-v8a listings match %q", filter)
 	}
 	if force {
 		db, err := artifacts.Open(ctx, artifacts.Path(data))
@@ -81,7 +84,7 @@ func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string)
 		return err
 	}
 	work := make([]Listing, 0, len(want))
-	for _, listing := range listings {
+	for _, listing := range androidListings(listings) {
 		if _, ok := want[listing.AppID]; ok {
 			work = append(work, listing)
 		}
@@ -91,6 +94,32 @@ func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string)
 	}
 	writeBlock(ctx, enrichLine(len(work), "", false))
 	return enrichWork(ctx, data, modelDir, work, pictures, false, false)
+}
+
+// EnrichListing enriches one listing that is not in the relay database yet.
+// picture is its author's profile picture. A listing without an f tag
+// android-arm64-v8a is skipped.
+func EnrichListing(ctx context.Context, data, modelDir string, listing Listing, picture string) error {
+	work := androidListings([]Listing{listing})
+	if len(work) == 0 {
+		return nil
+	}
+	return enrichWork(ctx, data, modelDir, work, map[string]string{listing.App.PubKey: picture}, false, false)
+}
+
+// androidListings keeps apps whose f tags include android-arm64-v8a.
+func androidListings(listings []Listing) []Listing {
+	out := make([]Listing, 0, len(listings))
+	for _, listing := range listings {
+		app, err := events.ParseApp(&listing.App)
+		if err != nil {
+			continue
+		}
+		if slices.Contains(app.Platforms, preferredABI) {
+			out = append(out, listing)
+		}
+	}
+	return out
 }
 
 func enrichLine(n int, filter string, force bool) string {

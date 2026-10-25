@@ -18,7 +18,7 @@ type catalogEnv struct {
 	log    *slog.Logger
 }
 
-var errNoDataDir = errors.New("DATA_DIR is not set: the relay data directory, the one that holds relay.db")
+var errNoDataDir = errors.New("DATA_DIR is not set")
 
 func prepareEnv() (catalogEnv, error) {
 	if err := config.LoadDotEnv(); err != nil {

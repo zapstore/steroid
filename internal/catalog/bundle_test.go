@@ -4,7 +4,24 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/nbd-wtf/go-nostr"
+	"github.com/zapstore/relay/pkg/events"
 )
+
+func TestAndroidListings(t *testing.T) {
+	arm := Listing{AppID: "com.example.app", App: nostr.Event{Kind: events.KindApp, Tags: nostr.Tags{
+		{"d", "com.example.app"}, {"f", "android-armeabi-v7a"}, {"f", "android-arm64-v8a"},
+	}}}
+	desk := Listing{AppID: "fzf", App: nostr.Event{Kind: events.KindApp, Tags: nostr.Tags{
+		{"d", "fzf"}, {"f", "linux-x86_64"},
+	}}}
+	bare := Listing{AppID: "bare", App: nostr.Event{Kind: events.KindApp, Tags: nostr.Tags{{"d", "bare"}}}}
+	got := androidListings([]Listing{arm, desk, bare})
+	if len(got) != 1 || got[0].AppID != arm.AppID {
+		t.Fatalf("got %#v", got)
+	}
+}
 
 func TestProcessListingsLimit(t *testing.T) {
 	const limit = 4
