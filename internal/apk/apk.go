@@ -62,8 +62,9 @@ func (f *File) Persistent() bool {
 
 // Open returns the APK for hash. It reads the relay's local blob first:
 // <data>/blossom/blobs/<hash>.apk, present in the buffer zone or when the
-// relay runs without Bunny. A miss fetches BLOSSOM_URL/<hash>, which
-// redirects to Bunny, and then rawURL.
+// relay runs without Bunny. Then <data>/apk-cache/<hash>.apk, where the
+// indexer keeps the APKs it published. A miss fetches BLOSSOM_URL/<hash>,
+// which redirects to Bunny, and then rawURL.
 func Open(ctx context.Context, data, hash, rawURL string) (*File, error) {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	if file, ok := openBlob(data, hash); ok {
@@ -90,11 +91,15 @@ func openBlob(data, hash string) (*File, bool) {
 	if data == "" || !sha256Hex(hash) {
 		return nil, false
 	}
-	path := filepath.Join(data, "blossom", "blobs", hash+".apk")
-	if !sameHash(path, hash) {
-		return nil, false
+	for _, path := range []string{
+		filepath.Join(data, "blossom", "blobs", hash+".apk"),
+		filepath.Join(data, "apk-cache", hash+".apk"),
+	} {
+		if sameHash(path, hash) {
+			return &File{Path: path, Hash: hash}, true
+		}
 	}
-	return &File{Path: path, Hash: hash}, true
+	return nil, false
 }
 
 func blossomURL() string {

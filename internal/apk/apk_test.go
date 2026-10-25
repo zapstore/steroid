@@ -67,6 +67,36 @@ func TestFetchRejectsLargeBody(t *testing.T) {
 	}
 }
 
+func TestOpenReadsTheAPKCache(t *testing.T) {
+	const body = "apk-bytes"
+	sum := sha256.Sum256([]byte(body))
+	hash := hex.EncodeToString(sum[:])
+	t.Setenv("BLOSSOM_URL", "http://127.0.0.1:1")
+
+	data := t.TempDir()
+	cache := filepath.Join(data, "apk-cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, hash+".apk"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(t.Context(), data, hash, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != filepath.Join(cache, hash+".apk") || !got.Persistent() {
+		t.Fatalf("got %+v", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(cache, hash+".apk"), []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(t.Context(), data, hash, ""); err == nil {
+		t.Fatal("a cached file with another hash was read")
+	}
+}
+
 func TestOpenReadsBlobThenBlossomThenURL(t *testing.T) {
 	allowTestURL(t)
 	const body = "apk-bytes"
