@@ -11,7 +11,7 @@ import (
 
 // pillFacts is the order the security file and the app page share.
 var pillFacts = []string{
-	"google_services", "tracking", "ads", "offline_capable", "e2ee", "source_available",
+	"google_services", "tracking", "ads", "offline_capable", "source_available",
 }
 
 // falseFacts are the only facts stored as false. The others are true or absent.

@@ -204,6 +204,39 @@ func TestCheckFailureTriesNextModel(t *testing.T) {
 	}
 }
 
+func TestCheckFailureIsRepairedBySameModel(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var req struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := req.Messages[len(req.Messages)-1]
+		if strings.Contains(last.Content, "rejected: empty about") && req.Messages[len(req.Messages)-2].Role == "assistant" {
+			_, _ = io.WriteString(w, ok(`{"about":"A map."}`))
+			return
+		}
+		_, _ = io.WriteString(w, ok(`{"about":""}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New([]Provider{{Name: "p", URL: srv.URL, Key: "k", Models: []string{"m1", "m2"}}}, nil, nil)
+	check := func(s string) error {
+		var v struct{ About string }
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			return err
+		}
+		if v.About == "" {
+			return errors.New("empty about")
+		}
+		return nil
+	}
+	got, err := c.JSON(t.Context(), ask(), check)
+	if err != nil || got.Model != "m1" || got.Usage.Prompt != 20 || calls.Load() != 2 {
+		t.Fatalf("%+v %v calls %d", got, err, calls.Load())
+	}
+}
+
 func TestCancelDoesNotFallBack(t *testing.T) {
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("fallback called")

@@ -330,7 +330,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture st
 	if writeSecurity || writeFacts || !sameWords(kws, prev.Keywords) || !sameFlags(found, prev.Flags) {
 		sheet := prev.CSV
 		if len(g.rows) > 0 {
-			rows := run.Rows(g.rows, secRes, digest != "", app, g.repo)
+			rows := run.Rows(g.rows, secRes, app, g.repo)
 			rows = keepSourceRow(rows, prev.CSV)
 			sheet = factCSV(rows, nil)
 		}
@@ -718,6 +718,9 @@ func (e *enricher) ask(ctx context.Context, rep *appReport, w work, app generate
 				return
 			}
 			rep.step("security " + res.Model)
+			if res.Degraded != "" {
+				rep.degrade("security", res.Degraded)
+			}
 			secRes = &res
 		})
 	}

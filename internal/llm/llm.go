@@ -111,8 +111,9 @@ type Usage struct {
 	Reasoning  int `json:"reasoning_tokens"`
 }
 
-// Check decodes content and rejects a reply that is not usable.
-// A rejected reply moves on to the next model.
+// Check decodes content and rejects a reply that is not usable. A rejected
+// reply goes back to the same model once with the error; a second rejection
+// moves on to the next model.
 type Check func(content string) error
 
 // JSON asks for one JSON object and returns the first reply that passes check.
@@ -169,7 +170,7 @@ func (c *Client) provider(ctx context.Context, p Provider, req Request, check Ch
 		reply, err := c.call(ctx, p, model, req)
 		if err == nil {
 			if cerr := check(reply.Content); cerr != nil {
-				err = &modelError{msg: cerr.Error()}
+				reply, err = c.repair(ctx, p, model, req, reply, cerr, check)
 			}
 		}
 		if err == nil {
@@ -195,6 +196,28 @@ func (c *Client) provider(ctx context.Context, p Provider, req Request, check Ch
 		return Reply{}, fmt.Errorf("%s: no model available", p.Name)
 	}
 	return Reply{}, fmt.Errorf("%s: %s", p.Name, strings.Join(errs, "; "))
+}
+
+// repair sends a rejected reply back to the same model once, with why it was
+// rejected. A second rejection is a model failure.
+func (c *Client) repair(ctx context.Context, p Provider, model string, req Request, bad Reply, why error, check Check) (Reply, error) {
+	fix := req
+	fix.Messages = append(req.Messages[:len(req.Messages):len(req.Messages)],
+		Message{Role: "assistant", Content: bad.Content},
+		Message{Role: "user", Content: "That reply was rejected: " + why.Error() + ". Reply again with the whole corrected JSON object and nothing else."},
+	)
+	debug.From(ctx).Append("llm.log", fmt.Sprintf("%s %s %s: repair: %v\n", req.Name, p.Name, model, why))
+	reply, err := c.call(ctx, p, model, fix)
+	if err != nil {
+		return Reply{}, err
+	}
+	reply.Usage.Prompt += bad.Usage.Prompt
+	reply.Usage.Completion += bad.Usage.Completion
+	reply.Usage.Reasoning += bad.Usage.Reasoning
+	if cerr := check(reply.Content); cerr != nil {
+		return Reply{}, &modelError{msg: why.Error() + "; after repair: " + cerr.Error()}
+	}
+	return reply, nil
 }
 
 func (c *Client) call(ctx context.Context, p Provider, model string, req Request) (Reply, error) {

@@ -224,8 +224,6 @@ func TestReadQuotesYesFactSignalAndNeighbor(t *testing.T) {
 		"camera.takePicture()",
 		"Account:\nsrc/auth.kt\n",
 		"fun login(user: String, password: String)",
-		"Encryption:\nsrc/box.kt\n",
-		"crypto_secretbox_easy(message)",
 		"- privacy network src/net.kt:2: val conn = HttpURLConnection()",
 		"- privacy network src/net.kt:1: fun leak() {",
 		"- privacy network src/net.kt:3: conn.connect()",
@@ -233,6 +231,9 @@ func TestReadQuotesYesFactSignalAndNeighbor(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "Encryption:") {
+		t.Fatalf("encryption quoted:\n%s", got)
 	}
 	if strings.Contains(got, "Offline:") || strings.Contains(got, "works offline") {
 		t.Fatalf("offline claim quoted:\n%s", got)
@@ -333,6 +334,29 @@ func TestUseQuotePrefersInstallCall(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 	if !strings.Contains(got, "fun installDownloadedApk()") || !strings.Contains(got, "packageInstaller.createSession") {
+		t.Fatalf("%s", got)
+	}
+}
+
+func TestUseQuoteSkipsTextFilesAndWordParts(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"LICENSE":             "\"License\" shall mean the terms defined in this document.\n",
+		"app/build.gradle":    "def access = rootProject.file('key.properties')\n",
+		"lib/defs.dart":       "final undefined = definitions;\n",
+		"lib/permission.dart": "await Permission.ACCESS_FINE_LOCATION.request();\n",
+	}
+	for name, body := range files {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := Read(&Tree{Dir: dir}, true, []Use{{Fact: "fine_location", Hint: "ACCESS_FINE_LOCATION"}}).Text
+	if !strings.Contains(got, "Uses:\nfine_location lib/permission.dart\n") {
 		t.Fatalf("%s", got)
 	}
 }

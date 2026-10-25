@@ -117,7 +117,7 @@ func keepPath(name string) bool {
 	switch ext {
 	case ".kt", ".java", ".dart", ".xml", ".gradle", ".kts", ".aidl",
 		".go", ".rs", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp",
-		".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".proto":
+		".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".proto", ".scala":
 		return true
 	default:
 		return false

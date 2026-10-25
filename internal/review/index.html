@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eval review</title>
+<style>
+:root {
+  --bg: #f3f0e8;
+  --panel: #fbf9f4;
+  --sunk: #ece8de;
+  --line: #ddd7ca;
+  --ink: #1f1c17;
+  --muted: #5d574b;
+  --accent: #155e51;
+  --accent-soft: #d9eae4;
+  --ok: #1d6838;
+  --ok-soft: #dcefe1;
+  --bad: #9f2f28;
+  --bad-soft: #f5dfdb;
+  --warn: #7f5200;
+  --warn-soft: #f4e7cc;
+  --mark: #f7dc7a;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --r: 6px;
+  --shadow: 0 1px 2px rgb(31 28 23 / 6%), 0 4px 14px rgb(31 28 23 / 7%);
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 var(--sans); font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--accent-soft); color: var(--ink); }
+* { scrollbar-width: thin; scrollbar-color: #c9c2b3 transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+kbd {
+  font: 11px/1 var(--mono); padding: 2px 5px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--panel); color: var(--muted);
+}
+
+/* layout */
+.app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+header {
+  display: flex; align-items: center; gap: 20px; padding: 10px 18px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header h1 { font-size: 15px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.tabs { display: flex; gap: 2px; background: var(--sunk); padding: 3px; border-radius: 8px; }
+.tabs button {
+  border: 0; background: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; color: var(--muted);
+}
+.tabs button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); font-weight: 600; }
+.tabs .n { font-size: 12px; margin-left: 6px; color: var(--muted); }
+.progress { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 200px; }
+.bar { flex: 1; height: 8px; border-radius: 99px; background: var(--sunk); display: flex; overflow: hidden; }
+.bar i { display: block; height: 100%; transition: width .4s cubic-bezier(.16,1,.3,1); }
+.bar .a { background: var(--ok); } .bar .r { background: var(--bad); }
+.progress .stats { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.progress .stats b { color: var(--ink); font-weight: 600; }
+.help-btn { border: 1px solid var(--line); background: none; border-radius: var(--r); padding: 4px 10px; cursor: pointer; color: var(--muted); }
+
+.cols { display: grid; grid-template-columns: 290px minmax(0, 1fr) minmax(440px, 0.95fr); min-height: 0; }
+.list, .evidence, .labels { min-height: 0; overflow: auto; }
+.list { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+.filters { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.filters .row { display: flex; gap: 6px; }
+.filters select, .filters input {
+  width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg);
+}
+.items { overflow: auto; flex: 1; }
+.item {
+  display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line);
+  background: none; padding: 9px 12px 9px 14px; cursor: pointer; position: relative;
+}
+.item:hover { background: var(--bg); }
+.item[aria-current="true"] { background: var(--accent-soft); }
+.item .id { font: 12.5px/1.35 var(--mono); word-break: break-all; }
+.item .sub { display: flex; gap: 6px; align-items: center; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #b5ad9c; }
+.dot.approved { background: var(--ok); } .dot.rejected { background: var(--bad); }
+.dot.problem { background: var(--warn); }
+.count { padding: 8px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+
+.evidence { padding: 18px 22px 40px; }
+.labels { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+.form { overflow: auto; padding: 18px 20px 24px; flex: 1; }
+
+/* evidence */
+.title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.title h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.015em; }
+.title .idline { font: 12px var(--mono); color: var(--muted); }
+.meta { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 18px; }
+.pill { font-size: 11.5px; padding: 1px 8px; border-radius: 99px; background: var(--sunk); color: var(--muted); }
+.pill.split { background: var(--ink); color: var(--panel); }
+.pill.status-approved { background: var(--ok-soft); color: var(--ok); }
+.pill.status-rejected { background: var(--bad-soft); color: var(--bad); }
+section.block { margin: 0 0 22px; }
+section.block > h3 {
+  font-size: 12px; font-weight: 650; color: var(--muted); margin: 0 0 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+section.block > h3 .aside { font-weight: 400; }
+.prose {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 75ch;
+}
+.prose.clip { max-height: 260px; overflow: auto; }
+.prose.offered { border-color: var(--accent); background: #f4faf7; }
+.prose.empty { color: var(--muted); font-style: italic; }
+.links { font-size: 12.5px; color: var(--muted); margin-top: 6px; word-break: break-all; }
+.links a { color: var(--accent); text-underline-offset: 2px; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+table.scan { border-collapse: collapse; width: 100%; max-width: 75ch; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+table.scan td { padding: 6px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+table.scan tr:first-child td { border-top: 0; }
+table.scan td.f { font: 12.5px var(--mono); white-space: nowrap; }
+table.scan td.v { width: 44px; font-weight: 600; }
+table.scan td.v.yes { color: var(--warn); } table.scan td.v.no { color: var(--muted); }
+table.scan td.e { font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+pre.src {
+  margin: 0; background: #1f1d19; color: #ece6d8; border-radius: var(--r); padding: 12px 14px;
+  font: 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 560px; overflow: auto;
+}
+pre.src mark { background: #e4b93c; color: #1f1d19; }
+pre.src::selection, pre.src *::selection { background: #46604f; color: #fff; }
+.find { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.find input { flex: 1; max-width: 320px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.find .hits { font-size: 12px; color: var(--muted); }
+details > summary { cursor: pointer; color: var(--accent); font-size: 13px; margin-bottom: 6px; }
+
+/* form */
+.field { margin-bottom: 16px; }
+.field > label, .field > .lbl {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 12px; font-weight: 650; color: var(--muted); margin-bottom: 5px;
+}
+.field .hint { font-weight: 400; }
+textarea, .field input[type=text], .field select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); background: #fff;
+  resize: vertical;
+}
+textarea { min-height: 64px; line-height: 1.5; }
+textarea.mono, input.mono { font: 12.5px/1.5 var(--mono); }
+textarea:focus, input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.counter { font-weight: 400; }
+.counter.bad { color: var(--bad); font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: #fff; }
+.seg button { border: 0; border-left: 1px solid var(--line); background: none; padding: 6px 14px; cursor: pointer; color: var(--muted); }
+.seg button:first-child { border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.seg button kbd { margin-left: 6px; border-color: currentColor; background: none; color: inherit; opacity: .7; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.chip {
+  font: 11.5px/1.6 var(--mono); padding: 0 7px; border-radius: 4px; border: 1px solid transparent; cursor: pointer;
+  background: var(--sunk); color: var(--muted);
+}
+.chip.hit { background: var(--ok-soft); color: var(--ok); }
+.chip.miss { background: var(--bad-soft); color: var(--bad); }
+.chip.forbidden { background: var(--bad-soft); color: var(--bad); text-decoration: line-through; }
+.chiprow { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.chiprow > span:first-child { min-width: 64px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+table.facts { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+table.facts td { padding: 4px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+table.facts td:first-child { font-family: var(--mono); white-space: nowrap; }
+table.facts tr.off td { color: var(--bad); }
+
+.problems { border-radius: var(--r); padding: 10px 12px; font-size: 13px; margin-bottom: 16px; }
+.problems.clean { background: var(--ok-soft); color: var(--ok); }
+.problems.dirty { background: var(--warn-soft); color: var(--warn); }
+.problems ul { margin: 4px 0 0; padding-left: 18px; }
+.problems li { margin: 2px 0; overflow-wrap: anywhere; }
+
+.actions { border-top: 1px solid var(--line); padding: 12px 20px; background: var(--panel); display: grid; gap: 10px; }
+.actions .main { display: flex; gap: 8px; align-items: center; }
+.btn {
+  border: 1px solid var(--line); background: #fff; padding: 8px 14px; border-radius: var(--r); cursor: pointer;
+  display: inline-flex; gap: 8px; align-items: center; font-weight: 550; white-space: nowrap;
+}
+.btn:hover { border-color: #bdb5a4; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.approve { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.approve.force { background: var(--warn); border-color: var(--warn); }
+.btn.reject { color: var(--bad); }
+.btn kbd { border-color: currentColor; background: none; color: inherit; opacity: .75; }
+.reason { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r); background: #fff; }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.quick button { border: 1px dashed var(--line); background: none; border-radius: 99px; padding: 1px 9px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.quick button:hover { border-color: var(--bad); color: var(--bad); }
+.saved { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+.empty-state { display: grid; place-items: center; height: 100%; color: var(--muted); text-align: center; padding: 40px; }
+.empty-state h2 { color: var(--ink); font-size: 18px; margin: 0 0 6px; }
+
+.toasts { position: fixed; left: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 10; }
+.toast {
+  background: var(--ink); color: var(--panel); padding: 9px 14px; border-radius: var(--r); box-shadow: var(--shadow);
+  max-width: 520px; font-size: 13px; animation: rise .35s cubic-bezier(.16,1,.3,1);
+}
+.toast.err { background: var(--bad); }
+.toast button { margin-left: 12px; background: none; border: 0; color: inherit; text-decoration: underline; cursor: pointer; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+
+.help {
+  position: fixed; inset: 0; background: rgb(31 28 23 / 35%); display: none; place-items: center; z-index: 20;
+}
+.help.open { display: grid; }
+.help .card { background: var(--panel); border-radius: 10px; padding: 22px 26px; box-shadow: var(--shadow); min-width: 380px; }
+.help h2 { margin: 0 0 12px; font-size: 16px; }
+.help dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0; font-size: 13px; }
+.help dt { text-align: right; }
+
+@media (max-width: 1180px) {
+  .cols { grid-template-columns: 240px minmax(0, 1fr); }
+  .labels { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .cols { overflow: auto; }
+  .evidence, .form { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Eval review</h1>
+    <div class="tabs" id="tabs" role="group" aria-label="Eval"></div>
+    <div class="progress">
+      <div class="bar" aria-hidden="true"><i class="a" id="barA"></i><i class="r" id="barR"></i></div>
+      <span class="stats" id="stats"></span>
+    </div>
+    <button class="help-btn" id="helpBtn" type="button">Shortcuts <kbd>?</kbd></button>
+  </header>
+  <div class="cols">
+    <nav class="list" aria-label="Cases">
+      <div class="filters">
+        <div class="row">
+          <select id="fStatus" aria-label="Status">
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="all">All</option>
+          </select>
+          <select id="fSplit" aria-label="Split">
+            <option value="">All splits</option>
+            <option value="dev">dev</option>
+            <option value="test">test</option>
+            <option value="train">train</option>
+          </select>
+        </div>
+        <select id="fTag" aria-label="Tag"><option value="">All tags</option></select>
+        <input id="fQ" type="search" placeholder="Search id or name" aria-label="Search">
+      </div>
+      <div class="items" id="items"></div>
+      <div class="count" id="count"></div>
+    </nav>
+    <main class="evidence" id="evidence"></main>
+    <aside class="labels" id="labels"></aside>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="help" id="help" role="dialog" aria-modal="true" aria-label="Shortcuts">
+  <div class="card">
+    <h2>Shortcuts</h2>
+    <dl>
+      <dt><kbd>a</kbd></dt><dd>Approve and go to the next case</dd>
+      <dt><kbd>⇧</kbd> <kbd>a</kbd></dt><dd>Approve even with problems</dd>
+      <dt><kbd>⌘</kbd> <kbd>↵</kbd></dt><dd>Approve, also from inside a field</dd>
+      <dt><kbd>r</kbd></dt><dd>Write a reject reason, <kbd>↵</kbd> to reject</dd>
+      <dt><kbd>u</kbd></dt><dd>Undo the last approve or reject</dd>
+      <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next and previous case</dd>
+      <dt><kbd>⌘</kbd> <kbd>s</kbd></dt><dd>Save edits without deciding</dd>
+      <dt><kbd>/</kbd></dt><dd>Find in the listing and the source</dd>
+      <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>About: action either, keep, write</dd>
+      <dt><kbd>w</kbd></dt><dd>Security: toggle warning</dd>
+      <dt><kbd>esc</kbd></dt><dd>Leave a field, close this</dd>
+    </dl>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const lower = s => String(s ?? "").toLowerCase();
+
+const state = {
+  items: [], kind: localStorage.getItem("kind") || "security",
+  filter: { status: "pending", split: "", tag: "", q: "" },
+  key: null, draft: null, problems: [], dirty: false, undo: [], find: "",
+};
+
+async function api(path, body) {
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opt);
+  const t = await r.text();
+  if (!r.ok) throw new Error(t.trim() || r.statusText);
+  return t ? JSON.parse(t) : null;
+}
+
+function toast(msg, opts = {}) {
+  const el = document.createElement("div");
+  el.className = "toast" + (opts.err ? " err" : "");
+  el.textContent = msg;
+  if (opts.action) {
+    const b = document.createElement("button");
+    b.textContent = opts.action.label;
+    b.onclick = () => { opts.action.run(); el.remove(); };
+    el.append(b);
+  }
+  $("#toasts").append(el);
+  setTimeout(() => el.remove(), opts.err ? 9000 : 4500);
+}
+
+const keyOf = it => it.kind + "\u0000" + it.id;
+const current = () => state.items.find(it => keyOf(it) === state.key);
+
+function visible() {
+  const f = state.filter, q = lower(f.q);
+  return state.items.filter(it => it.kind === state.kind
+    && (f.status === "all" || it.status === f.status)
+    && (!f.split || it.split === f.split)
+    && (!f.tag || (it.tags || []).includes(f.tag))
+    && (!q || lower(it.id).includes(q) || lower(it.case.listing?.name).includes(q)));
+}
+
+/* ---------- header, list ---------- */
+
+function renderTabs() {
+  const tabs = $("#tabs");
+  tabs.innerHTML = "";
+  for (const kind of ["about", "security"]) {
+    const n = state.items.filter(it => it.kind === kind && it.status === "pending").length;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(kind === state.kind));
+    b.innerHTML = `${kind === "about" ? "About" : "Security"}<span class="n">${n}</span>`;
+    b.onclick = () => switchKind(kind);
+    tabs.append(b);
+  }
+  const all = state.items.filter(it => it.kind === state.kind);
+  const a = all.filter(it => it.status === "approved").length;
+  const r = all.filter(it => it.status === "rejected").length;
+  const total = all.length || 1;
+  $("#barA").style.width = (100 * a / total) + "%";
+  $("#barR").style.width = (100 * r / total) + "%";
+  $("#stats").innerHTML = `<b>${a}</b> approved · <b>${r}</b> rejected · <b>${all.length - a - r}</b> to go`;
+}
+
+function renderTagFilter() {
+  const tags = new Set();
+  for (const it of state.items) if (it.kind === state.kind) for (const t of it.tags || []) tags.add(t);
+  const sel = $("#fTag");
+  const keep = state.filter.tag;
+  sel.innerHTML = `<option value="">All tags</option>` + [...tags].sort().map(t => `<option${t === keep ? " selected" : ""}>${esc(t)}</option>`).join("");
+}
+
+function renderList() {
+  const list = visible();
+  const box = $("#items");
+  box.innerHTML = "";
+  for (const it of list) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "item";
+    b.setAttribute("aria-current", String(keyOf(it) === state.key));
+    const dot = it.status !== "pending" ? it.status : (it.problems.length ? "problem" : "");
+    const tags = (it.tags || []).filter(t => t !== "draft" && t !== "reviewed").slice(0, 3).join(" · ");
+    b.innerHTML = `<div class="id">${esc(it.id)}</div><div class="sub"><span class="dot ${dot}"></span>${esc(it.split)}${tags ? " · " + esc(tags) : ""}</div>`;
+    b.onclick = () => select(it);
+    box.append(b);
+  }
+  $("#count").textContent = `${list.length} shown`;
+  const cur = $(".item[aria-current=true]", box);
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+function renderAll() {
+  renderTabs();
+  renderList();
+  renderCase();
+}
+
+/* ---------- selection ---------- */
+
+async function select(it) {
+  if (it && state.key === keyOf(it)) return;
+  await flush();
+  state.key = it ? keyOf(it) : null;
+  state.draft = it ? structuredClone(it.case) : null;
+  state.problems = it ? it.problems : [];
+  state.dirty = false;
+  renderList();
+  renderCase();
+}
+
+function step(delta) {
+  const list = visible();
+  if (!list.length) return;
+  const i = list.findIndex(it => keyOf(it) === state.key);
+  const next = list[Math.max(0, Math.min(list.length - 1, (i < 0 ? 0 : i + delta)))];
+  select(next);
+}
+
+async function switchKind(kind) {
+  if (kind === state.kind) return;
+  await flush();
+  state.kind = kind;
+  localStorage.setItem("kind", kind);
+  state.filter.tag = "";
+  state.key = null;
+  renderTagFilter();
+  renderTabs();
+  renderList();
+  select(visible()[0]);
+}
+
+/* ---------- groups and lists ---------- */
+
+const groupsText = gs => (gs || []).map(g => g.join(" | ")).join("\n");
+const parseGroups = t => t.split("\n").map(l => l.split("|").map(p => lower(p.trim())).filter(Boolean)).filter(g => g.length);
+const parseLines = t => t.split("\n").map(s => s.trim()).filter(Boolean);
+const parseTerms = t => t.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+const notesText = n => Object.entries(n || {}).sort().map(([f, gs]) => `${f}: ${gs.map(g => g.join(" | ")).join(" + ")}`).join("\n");
+function parseNotes(t) {
+  const out = {};
+  for (const line of t.split("\n")) {
+    const i = line.indexOf(":");
+    if (i < 0) continue;
+    const fact = line.slice(0, i).trim();
+    const gs = line.slice(i + 1).split("+").map(g => g.split("|").map(p => lower(p.trim())).filter(Boolean)).filter(g => g.length);
+    if (fact && gs.length) out[fact] = gs;
+  }
+  return out;
+}
+function parseCSV(text) {
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(f); f = ""; }
+    else if (ch === "\n") { row.push(f); rows.push(row); row = []; f = ""; }
+    else if (ch !== "\r") f += ch;
+  }
+  if (f !== "" || row.length) { row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ""));
+}
+
+function chips(groups, text, forbidden = false) {
+  const low = lower(text);
+  return groups.map(g => {
+    const hit = g.some(p => low.includes(lower(p)));
+    const cls = forbidden ? (hit ? "forbidden" : "") : (hit ? "hit" : "miss");
+    return `<button type="button" class="chip ${cls}" data-find="${esc(g[0])}" title="Find in the evidence">${esc(g.join(" | "))}</button>`;
+  }).join("");
+}
+
+/* ---------- find ---------- */
+
+const findTargets = [];
+function findable(el, text) { findTargets.push({ el, text }); }
+function highlight(text, term) {
+  if (!term) return [esc(text), 0];
+  const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  let out = "", last = 0, n = 0;
+  for (const m of text.matchAll(re)) {
+    out += esc(text.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+    last = m.index + m[0].length; n++;
+  }
+  return [out + esc(text.slice(last)), n];
+}
+function applyFind(term) {
+  state.find = term;
+  let total = 0;
+  for (const t of findTargets) {
+    const [html, n] = highlight(t.text, term);
+    t.el.innerHTML = html;
+    total += n;
+    if (n && t.el.closest("details")) t.el.closest("details").open = true;
+  }
+  const input = $("#find");
+  if (input && input.value !== term) input.value = term;
+  const hits = $("#hits");
+  if (hits) hits.textContent = term ? `${total} found` : "";
+  const first = $("#evidence mark");
+  if (first) first.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+/* ---------- evidence ---------- */
+
+function renderCase() {
+  const it = current();
+  findTargets.length = 0;
+  if (!it) {
+    const pending = state.items.filter(x => x.kind === state.kind && x.status === "pending").length;
+    $("#evidence").innerHTML = `<div class="empty-state"><div><h2>${pending ? "Pick a case" : "All reviewed"}</h2>${pending ? "Choose one from the list, or press <kbd>j</kbd>." : "Nothing is pending for this eval. Switch eval, or set the list to Approved to look back."}</div></div>`;
+    $("#labels").innerHTML = "";
+    return;
+  }
+  const c = state.draft, l = c.listing || {};
+  const tags = (it.tags || []).filter(t => t !== "draft").map(t => `<span class="pill">${esc(t)}</span>`).join("");
+  let html = `
+    <div class="title"><h2>${esc(l.name || it.id)}</h2><span class="idline">${esc(it.id)}</span></div>
+    <div class="meta"><span class="pill split">${esc(it.split)}</span><span class="pill status-${it.status}">${it.status}</span>${tags}</div>
+    <div class="find"><input id="find" type="search" placeholder="Find in listing and source" value="${esc(state.find)}"><span class="hits" id="hits"></span></div>`;
+  if (it.kind === "about") {
+    html += `
+      <section class="block"><h3>Offered description <span class="aside">what “keep” would show</span></h3>
+        <div class="prose offered ${it.candidate ? "" : "empty"}" id="evCand"></div></section>`;
+  } else {
+    html += `<section class="block"><h3>Scan of this APK</h3><table class="scan">${(c.scan || []).map(r =>
+      `<tr><td class="f">${esc(r.fact)}</td><td class="v ${esc(r.value)}">${esc(r.value)}</td><td class="e">${esc(r.evidence || "")}</td></tr>`).join("")}</table></section>`;
+    if (c.current) html += `<section class="block"><h3>Current stored note</h3><div class="prose" id="evCur"></div></section>`;
+  }
+  html += `<section class="block"><h3>Listing</h3>
+      ${l.summary ? `<div class="prose" id="evSum" style="margin-bottom:8px"></div>` : ""}
+      <div class="prose clip ${l.content ? "" : "empty"}" id="evContent"></div>
+      <div class="links">${[l.website, l.repository].filter(Boolean).map(u => `<a href="${esc(u)}" target="_blank" rel="noreferrer">${esc(u)}</a>`).join(" · ")}${l.license ? " · " + esc(l.license) : ""}${(l.tags || []).length ? " · tags: " + esc(l.tags.join(", ")) : ""}</div>
+    </section>`;
+  if (it.kind === "about") {
+    for (const [k, label] of [["store_short", "Store short"], ["store_full", "Store full"], ["site_description", "Website description"], ["readme", "README"]]) {
+      if (l[k]) html += `<section class="block"><h3>${label}</h3><div class="prose clip" id="ev_${k}"></div></section>`;
+    }
+  } else {
+    html += `<section class="block"><h3>Source digest <span class="aside">${c.source ? (c.source.length / 1024).toFixed(1) + " KB" : "the repository was not read"}</span></h3>
+      ${c.source ? `<details><summary>Show the digest the model reads</summary><pre class="src" id="evSrc"></pre></details>` : ""}</section>`;
+  }
+  $("#evidence").innerHTML = html;
+  $("#evidence").scrollTop = 0;
+  const bind = (sel, text, fallback) => { const el = $(sel); if (el) { if (text) findable(el, text); else el.textContent = fallback || ""; } };
+  bind("#evCand", it.candidate, "None: the description is empty, too short, too long, or not English, so the about must be written.");
+  bind("#evCur", c.current);
+  bind("#evSum", l.summary);
+  bind("#evContent", l.content, "No description.");
+  for (const k of ["store_short", "store_full", "site_description", "readme"]) bind("#ev_" + k, l[k]);
+  bind("#evSrc", c.source);
+  $("#find").addEventListener("input", e => applyFind(e.target.value));
+  applyFind(state.find);
+  renderForm(it);
+}
+
+/* ---------- form ---------- */
+
+function renderForm(it) {
+  const w = state.draft.want || {};
+  const decided = it.status !== "pending";
+  let f = `<div class="form" id="form">`;
+  f += `<div id="problems"></div>`;
+  f += `<div class="row2"><div class="field"><label for="iSplit">Split</label>
+    <select id="iSplit">${["train", "dev", "test"].map(s => `<option${s === state.draft.split ? " selected" : ""}>${s}</option>`).join("")}</select></div>`;
+  if (it.kind === "about") {
+    f += `<div class="field"><span class="lbl">Action</span><div class="seg" id="iAction">
+      ${[["", "either", 1], ["keep", "keep", 2], ["write", "write", 3]].map(([v, t, k]) =>
+        `<button type="button" data-v="${v}" aria-pressed="${(w.action || "") === v}">${t}<kbd>${k}</kbd></button>`).join("")}</div></div></div>`;
+    f += field("iAbout", "Reference about", `<textarea id="iAbout" rows="4">${esc(w.about)}</textarea>`, `<span class="counter" id="cAbout"></span>`);
+    f += `<div class="chiprow"><span>about</span><div class="chips" id="chAbout"></div></div><div class="chiprow" style="margin-bottom:14px"><span>offered</span><div class="chips" id="chCand"></div></div>`;
+    f += `<div class="row2">${field("iMust", "Must", `<textarea id="iMust" class="mono" rows="3" placeholder="photo | picture">${esc(groupsText(w.must))}</textarea>`, `<span class="hint">a group per line, | between synonyms</span>`)}
+      ${field("iMustNot", "Must not", `<textarea id="iMustNot" class="mono" rows="3">${esc((w.must_not || []).join("\n"))}</textarea>`, `<span class="hint">one per line</span>`)}</div>`;
+    f += field("iVerdict", "Verdict", `<input type="text" id="iVerdict" value="${esc(w.verdict)}" placeholder="keep, or write: why">`);
+    f += field("iKeywords", "Keywords", `<input type="text" id="iKeywords" class="mono" value="${esc((w.keywords || []).join(", "))}">`, `<span class="hint">comma separated, at most 8</span>`);
+    f += field("iQueries", "Queries", `<textarea id="iQueries" class="mono" rows="5">${esc((w.queries || []).join("\n"))}</textarea>`, `<span class="hint">one per line, 5 to 10</span>`);
+  } else {
+    f += `<div class="field"><span class="lbl">Warning first</span><div class="seg" id="iWarning">
+      ${[["", "unset"], ["false", "no"], ["true", "yes"]].map(([v, t]) =>
+        `<button type="button" data-v="${v}" aria-pressed="${String(w.warning ?? "") === v}">${t}</button>`).join("")}</div></div></div>`;
+    f += field("iSecurity", "Reference note", `<textarea id="iSecurity" rows="6">${esc(w.security)}</textarea>`, `<span class="counter" id="cSecurity"></span>`);
+    f += `<div class="chiprow" style="margin:-8px 0 14px"><span>note</span><div class="chips" id="chSec"></div></div>`;
+    f += field("iFacts", "Reference facts", `<textarea id="iFacts" class="mono" rows="5">${esc(w.facts)}</textarea><table class="facts" id="factsView"></table>`, `<span class="hint">"fact","value","note"</span>`);
+    f += `<div class="row2">${field("iMust", "Must", `<textarea id="iMust" class="mono" rows="3" placeholder="location">${esc(groupsText(w.must))}</textarea>`, `<span class="hint">a group per line</span>`)}
+      ${field("iMustNot", "Must not", `<textarea id="iMustNot" class="mono" rows="3">${esc((w.must_not || []).join("\n"))}</textarea>`, `<span class="hint">one per line</span>`)}</div>`;
+    f += field("iNotes", "Fact notes must contain", `<textarea id="iNotes" class="mono" rows="3" placeholder="camera: qr | barcode + scan">${esc(notesText(w.notes))}</textarea><div class="chips" id="chNotes"></div>`, `<span class="hint">fact: group + group</span>`);
+    f += `<div class="row2">${state.draft.current ? field("iSAction", "With the current note", `<select id="iSAction">${[["", "not checked"], ["keep", "keep: no-change"], ["write", "write a new note"]].map(([v, t]) => `<option value="${v}"${(w.action || "") === v ? " selected" : ""}>${t}</option>`).join("")}</select>`) : "<div></div>"}</div>`;
+  }
+  f += `</div>`;
+  f += `<div class="actions">`;
+  if (decided) {
+    f += `<div class="main"><button class="btn" id="bRestore" type="button">Move back to pending <kbd>u</kbd></button>
+      <span class="saved">${it.status === "rejected" ? esc(state.draft.note || "") : "In the reviewed file"}</span></div>`;
+  } else {
+    f += `<div class="main">
+      <button class="btn approve" id="bApprove" type="button">Approve <kbd>a</kbd></button>
+      <input class="reason" id="iReason" placeholder="Reject reason, then ↵" aria-label="Reject reason">
+      <button class="btn reject" id="bReject" type="button">Reject <kbd>r</kbd></button></div>
+      <div class="quick" id="quick">${["labels are wrong", "reference is wrong", "listing is broken", "not a useful case", "duplicate"].map(q => `<button type="button">${q}</button>`).join("")}
+      <span class="saved" id="saved"></span></div>`;
+  }
+  f += `</div>`;
+  $("#labels").innerHTML = f;
+  const form = $("#form");
+  form.addEventListener("input", onEdit);
+  form.addEventListener("change", onEdit);
+  for (const seg of form.querySelectorAll(".seg")) {
+    seg.addEventListener("click", e => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      for (const x of seg.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+      onEdit();
+    });
+  }
+  if (decided) {
+    $("#bRestore").onclick = restore;
+  } else {
+    $("#bApprove").onclick = e => approve(e.shiftKey || e.currentTarget.classList.contains("force"));
+    $("#bReject").onclick = reject;
+    $("#iReason").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); reject(); } });
+    $("#quick").addEventListener("click", e => {
+      const b = e.target.closest("button");
+      if (b) { $("#iReason").value = b.textContent; $("#iReason").focus(); }
+    });
+  }
+  refreshLive();
+  renderProblems();
+}
+
+function field(id, label, control, aside = "") {
+  return `<div class="field"><label for="${id}">${label}${aside}</label>${control}</div>`;
+}
+
+const val = id => { const el = document.getElementById(id); return el ? el.value : ""; };
+const segVal = id => { const b = document.querySelector(`#${id} button[aria-pressed=true]`); return b ? b.dataset.v : ""; };
+
+function readForm() {
+  const it = current();
+  const c = state.draft;
+  c.split = val("iSplit") || c.split;
+  const w = {};
+  if (it.kind === "about") {
+    const action = segVal("iAction");
+    if (action) w.action = action;
+    if (val("iVerdict").trim()) w.verdict = val("iVerdict").trim();
+    const must = parseGroups(val("iMust")); if (must.length) w.must = must;
+    const mustNot = parseLines(val("iMustNot")).map(lower); if (mustNot.length) w.must_not = mustNot;
+    if (val("iAbout").trim()) w.about = val("iAbout").trim();
+    const kw = parseTerms(val("iKeywords")); if (kw.length) w.keywords = kw;
+    const qs = parseLines(val("iQueries")); if (qs.length) w.queries = qs;
+  } else {
+    const sa = val("iSAction"); if (sa) w.action = sa;
+    const warn = segVal("iWarning"); if (warn) w.warning = warn === "true";
+    const must = parseGroups(val("iMust")); if (must.length) w.must = must;
+    const mustNot = parseLines(val("iMustNot")).map(lower); if (mustNot.length) w.must_not = mustNot;
+    const notes = parseNotes(val("iNotes")); if (Object.keys(notes).length) w.notes = notes;
+    if (val("iSecurity").trim()) w.security = val("iSecurity").replace(/\s+$/, "").replace(/^\s+/, "");
+    if (val("iFacts").trim()) w.facts = val("iFacts").trim();
+  }
+  c.want = w;
+  return c;
+}
+
+let checkTimer = 0, checkSeq = 0;
+function onEdit() {
+  readForm();
+  state.dirty = true;
+  const s = $("#saved"); if (s) s.textContent = "edited";
+  refreshLive();
+  clearTimeout(checkTimer);
+  checkTimer = setTimeout(check, 250);
+}
+
+async function check() {
+  const it = current();
+  if (!it) return;
+  const seq = ++checkSeq;
+  try {
+    const res = await api("/api/check", { kind: it.kind, case: state.draft });
+    if (seq !== checkSeq) return;
+    state.problems = res.problems;
+    renderProblems();
+  } catch (e) { toast(e.message, { err: true }); }
+}
+
+function renderProblems() {
+  const box = $("#problems");
+  if (!box) return;
+  const p = state.problems || [];
+  box.className = "problems " + (p.length ? "dirty" : "clean");
+  box.innerHTML = p.length
+    ? `<b>${p.length} problem${p.length > 1 ? "s" : ""}</b> the eval would flag<ul>${p.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`
+    : "Passes every check the eval runs on it.";
+  const b = $("#bApprove");
+  if (b) {
+    b.classList.toggle("force", p.length > 0);
+    b.innerHTML = p.length ? `Approve anyway <kbd>⇧a</kbd>` : `Approve <kbd>a</kbd>`;
+  }
+}
+
+function refreshLive() {
+  const it = current();
+  if (!it || !state.draft) return;
+  const w = state.draft.want || {};
+  if (it.kind === "about") {
+    const about = w.about || "";
+    const n = [...about].length;
+    const c = $("#cAbout");
+    if (c) { c.textContent = about ? `${n} / 100–300` : "empty: keeps the offered description"; c.className = "counter" + (about && (n < 100 || n > 300) ? " bad" : ""); }
+    const mustNot = (w.must_not || []).map(p => [p]);
+    $("#chAbout").innerHTML = about ? chips(w.must || [], about) + chips(mustNot, about, true) : `<span>no reference</span>`;
+    $("#chCand").innerHTML = it.candidate ? chips(w.must || [], it.candidate) + chips(mustNot, it.candidate, true) : `<span>none offered</span>`;
+  } else {
+    const sec = w.security || "";
+    const n = [...sec].length;
+    const warned = sec.trim().includes("\n\n");
+    const c = $("#cSecurity");
+    if (c) {
+      const mismatch = w.warning !== undefined && w.warning !== warned;
+      c.textContent = `${n} / 500 · ${warned ? "opens with a warning" : "no warning"}${mismatch ? " (label says " + (w.warning ? "yes" : "no") + ")" : ""}`;
+      c.className = "counter" + (n > 500 || mismatch ? " bad" : "");
+    }
+    $("#chSec").innerHTML = chips(w.must || [], sec) + chips((w.must_not || []).map(p => [p]), sec, true);
+    const rows = parseCSV(w.facts || "");
+    const scan = Object.fromEntries((state.draft.scan || []).map(r => [r.fact, r.value]));
+    const notes = Object.fromEntries(rows.map(r => [r[0]?.trim(), r[2] || ""]));
+    $("#factsView").innerHTML = rows.map(r => {
+      const fact = (r[0] || "").trim(), v = (r[1] || "").trim();
+      const off = scan[fact] !== v;
+      return `<tr class="${off ? "off" : ""}"><td>${esc(fact)}</td><td>${esc(v)}</td><td>${esc(r[2] || "")}</td></tr>`;
+    }).join("") + Object.keys(scan).filter(f => !(f in notes)).map(f => `<tr class="off"><td>${esc(f)}</td><td colspan="2">missing: the scan has this row</td></tr>`).join("");
+    $("#chNotes").innerHTML = Object.entries(w.notes || {}).map(([fact, gs]) => chips(gs, notes[fact] || "")).join("");
+  }
+}
+
+/* ---------- decisions ---------- */
+
+function replaceItem(it) {
+  const i = state.items.findIndex(x => keyOf(x) === keyOf(it));
+  if (i >= 0) state.items[i] = it; else state.items.push(it);
+}
+
+async function flush() {
+  const it = current();
+  if (!it || !state.dirty || it.status !== "pending") return;
+  try {
+    const saved = await api("/api/save", { kind: it.kind, id: it.id, case: readForm() });
+    replaceItem(saved);
+    state.dirty = false;
+  } catch (e) { toast("Not saved: " + e.message, { err: true }); }
+}
+
+async function save() {
+  await flush();
+  const s = $("#saved"); if (s) s.textContent = "saved";
+  renderList();
+}
+
+function nextAfter(it) {
+  const list = visible();
+  const i = list.findIndex(x => keyOf(x) === keyOf(it));
+  return list[i + 1] || list[i - 1] || null;
+}
+
+async function decide(path, body, verb) {
+  const it = current();
+  if (!it || it.status !== "pending") return;
+  const next = nextAfter(it);
+  try {
+    const res = await api(path, { kind: it.kind, id: it.id, case: readForm(), ...body });
+    replaceItem(res);
+    state.undo.push({ kind: it.kind, id: it.id });
+    state.dirty = false;
+    state.key = null;
+    toast(`${verb} ${it.id}`, { action: { label: "Undo", run: undo } });
+    renderTabs();
+    await select(next && visible().find(x => keyOf(x) === keyOf(next)) || visible()[0]);
+  } catch (e) { toast(e.message, { err: true }); }
+}
+
+function approve(force) {
+  if (state.problems.length && !force) {
+    toast("This case has problems. Fix them, or press Shift+A to approve anyway.", { err: true });
+    return;
+  }
+  decide("/api/approve", { force: !!force }, "Approved");
+}
+
+function reject() {
+  const input = $("#iReason");
+  const reason = input ? input.value.trim() : "";
+  if (!reason) { if (input) input.focus(); toast("Write a reason first: it is kept in the rejected file.", { err: true }); return; }
+  decide("/api/reject", { reason }, "Rejected");
+}
+
+async function restoreItem(kind, id) {
+  try {
+    const res = await api("/api/restore", { kind, id });
+    replaceItem(res);
+    if (kind !== state.kind) { state.kind = kind; renderTagFilter(); }
+    state.key = null;
+    if (state.filter.status !== "all" && state.filter.status !== "pending") { state.filter.status = "pending"; $("#fStatus").value = "pending"; }
+    renderTabs();
+    await select(res);
+    toast(`Moved ${id} back to pending`);
+  } catch (e) { toast(e.message, { err: true }); }
+}
+
+function restore() { const it = current(); if (it) restoreItem(it.kind, it.id); }
+function undo() {
+  const last = state.undo.pop();
+  if (last) restoreItem(last.kind, last.id); else toast("Nothing to undo.");
+}
+
+/* ---------- keys ---------- */
+
+document.addEventListener("keydown", e => {
+  const inField = e.target.matches("input, textarea, select");
+  const mod = e.metaKey || e.ctrlKey;
+  if (e.key === "Escape") {
+    $("#help").classList.remove("open");
+    if (inField) e.target.blur();
+    return;
+  }
+  if (mod && e.key === "Enter") { e.preventDefault(); approve(e.shiftKey); return; }
+  if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+  if (inField || mod || e.altKey) return;
+  const it = current();
+  switch (e.key) {
+    case "j": case "ArrowDown": e.preventDefault(); step(1); break;
+    case "k": case "ArrowUp": e.preventDefault(); step(-1); break;
+    case "a": approve(false); break;
+    case "A": approve(true); break;
+    case "r": e.preventDefault(); $("#iReason")?.focus(); break;
+    case "u": it && it.status !== "pending" ? restore() : undo(); break;
+    case "/": e.preventDefault(); $("#find")?.focus(); break;
+    case "?": $("#help").classList.toggle("open"); break;
+    case "1": case "2": case "3":
+      if (it?.kind === "about") { document.querySelectorAll("#iAction button")[+e.key - 1]?.click(); }
+      break;
+    case "w":
+      if (it?.kind === "security") {
+        const bs = [...document.querySelectorAll("#iWarning button")];
+        const on = segVal("iWarning") === "true";
+        bs[on ? 1 : 2]?.click();
+      }
+      break;
+  }
+});
+
+$("#labels").addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (chip) applyFind(chip.dataset.find);
+});
+$("#helpBtn").onclick = () => $("#help").classList.add("open");
+$("#help").onclick = e => { if (e.target.id === "help") $("#help").classList.remove("open"); };
+for (const [id, key] of [["fStatus", "status"], ["fSplit", "split"], ["fTag", "tag"], ["fQ", "q"]]) {
+  $("#" + id).addEventListener("input", e => {
+    state.filter[key] = e.target.value;
+    renderList();
+    if (!visible().some(it => keyOf(it) === state.key)) select(visible()[0]);
+  });
+}
+window.addEventListener("beforeunload", e => { if (state.dirty) { flush(); e.preventDefault(); } });
+
+(async function init() {
+  try {
+    state.items = await api("/api/items");
+  } catch (e) {
+    $("#evidence").innerHTML = `<div class="empty-state"><div><h2>Could not load the cases</h2>${esc(e.message)}</div></div>`;
+    return;
+  }
+  if (!state.items.some(it => it.kind === state.kind)) state.kind = "about";
+  renderTagFilter();
+  renderTabs();
+  renderList();
+  select(visible()[0]);
+})();
+</script>
+</body>
+</html>

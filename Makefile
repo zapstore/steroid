@@ -20,7 +20,7 @@ CGO_LDFLAGS := $(filter-out -Wl$(comma)-no_warn_duplicate_libraries,$(CGO_LDFLAG
 endif
 export CGO_LDFLAGS
 
-.PHONY: bin darwin-arm64 linux-arm64 linux-amd64 eval clean
+.PHONY: bin darwin-arm64 linux-arm64 linux-amd64 eval eval-security review clean
 
 bin:
 	mkdir -p dist
@@ -44,6 +44,12 @@ linux-amd64:
 
 eval:
 	CGO_ENABLED=$(CGO_ENABLED) go run $(GOFLAGS) ./cmd/abouteval $(ARGS)
+
+eval-security:
+	CGO_ENABLED=$(CGO_ENABLED) go run $(GOFLAGS) ./cmd/securityeval $(ARGS)
+
+review:
+	CGO_ENABLED=$(CGO_ENABLED) go run $(GOFLAGS) ./cmd/evalreview $(ARGS)
 
 clean:
 	rm -rf dist

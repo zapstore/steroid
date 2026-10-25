@@ -36,13 +36,13 @@ type draftReply struct {
 	Queries  []string   `json:"queries"`
 }
 
-// Draft asks the model to label each unlabeled case as a train case. A
-// drafted write is left without an action, so export still keeps an offered
-// description that passes the labels. A draft
-// whose reference fails its own labels, or that keeps a description its own
-// labels reject, comes back with Err set. Drafts are for review: they are
-// never dev or test.
-func Draft(ctx context.Context, c *llm.Client, cases []Case, jobs int) []Drafted {
+// Draft asks the model to label each unlabeled case with split. A drafted
+// write is left without an action, so export still keeps an offered
+// description that passes the labels. A draft whose reference fails its own
+// labels, or that keeps a description its own labels reject, comes back with
+// Err set. Every draft is tagged draft: a dev or test draft is scored only
+// after a person has checked it and moved it to the reviewed cases.
+func Draft(ctx context.Context, c *llm.Client, cases []Case, jobs int, split string) []Drafted {
 	out := make([]Drafted, len(cases))
 	sem := make(chan struct{}, max(jobs, 1))
 	var wg sync.WaitGroup
@@ -55,16 +55,16 @@ func Draft(ctx context.Context, c *llm.Client, cases []Case, jobs int) []Drafted
 		}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			out[i] = draft(ctx, c, cs)
+			out[i] = draft(ctx, c, cs, split)
 		})
 	}
 	wg.Wait()
 	return out
 }
 
-func draft(ctx context.Context, c *llm.Client, cs Case) Drafted {
+func draft(ctx context.Context, c *llm.Client, cs Case, split string) Drafted {
 	in := cs.Input()
-	cs.Split = "train"
+	cs.Split = split
 	cs.Note = ""
 	cs.Tags = append(cs.Tags, "draft")
 	msgs := []llm.Message{

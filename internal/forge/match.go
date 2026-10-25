@@ -15,6 +15,8 @@ type semver struct {
 // The tag whose name equals version wins. Otherwise a tag that is the same
 // text with an optional leading v wins. Otherwise the smallest
 // major.minor.patch distance wins, and a tie goes to the tag that is not newer.
+// A word prefix such as "stable-" or "release/" is ignored. A tag with another
+// major version is not close: the code there is too far from this release.
 func Closest(version string, tags []string) (string, bool) {
 	version = strings.TrimSpace(version)
 	if version == "" {
@@ -37,6 +39,9 @@ func Closest(version string, tags []string) (string, bool) {
 		}
 		sv, ok := parseSemver(tag)
 		if !ok {
+			sv, ok = parseSemver(withoutWordPrefix(tag))
+		}
+		if !ok || sv.major != target.major {
 			continue
 		}
 		dist := distance(target, sv)
@@ -97,6 +102,20 @@ func normalize(raw string) string {
 		return raw[1:]
 	}
 	return raw
+}
+
+// withoutWordPrefix drops letters before the first digit when they end in
+// "-", "_", or "/": "stable-35.0.1" is "35.0.1", "app-v1.2" is "1.2".
+func withoutWordPrefix(tag string) string {
+	i := strings.IndexAny(tag, "0123456789")
+	if i <= 0 {
+		return tag
+	}
+	prefix := strings.TrimSuffix(strings.TrimSuffix(tag[:i], "v"), "V")
+	if prefix == "" || !strings.ContainsAny(prefix[len(prefix)-1:], "-_/") {
+		return tag
+	}
+	return tag[i:]
 }
 
 func betterTie(target, next, prev semver) bool {

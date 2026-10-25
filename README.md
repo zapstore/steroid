@@ -1,13 +1,14 @@
 # steroid
 
-Steroid is the enricher. It writes the about text, the security text, the icon, and the search vector to `data/artifacts.db`. The catalog relay calls `github.com/zapstore/steroid/enrich` on each bundle tick for the apps in the diff. A cache hit does nothing. The relay then writes the snapshot.
+Steroid is the enricher. It writes the about text, the security text, the icon, and the search vector to `data/artifacts.db`. The catalog relay calls `enrich.Listing` on each admitted release, just before it lists it. A cache hit does nothing. An operator can re-run it with `enrich` on `relay.sock` or `relay bundle <app-id>`.
 
 ```
 steroid -v
 steroid [--debug] [--force] app_id
+steroid --images-only [--debug] [app_id]
 ```
 
-The app id selects listings whose id contains it. Steroid writes about, security, the icon, and the search vector. `--debug` logs each step and writes `prompt` and `response.json` under `data/debug/<app-id>/`. `--force` deletes that app's row first, so the cache is not reused. The server writes the snapshot.
+The app id selects listings whose id contains it. Omit it with `--images-only` to fetch every listing. Steroid writes about, security, the icon, and the search vector. `--debug` logs each step and writes `prompt` and `response.json` under `data/debug/<app-id>/`. `--force` deletes that app's row first, so the cache is not reused. `--images-only` fetches the listing icon and the author's picture and skips the model. The server writes the snapshot.
 
 ## Build
 
@@ -46,6 +47,41 @@ A case has a `split` (`train`, `dev`, or `test`) and a `want`:
 Besides `must` and `must_not`, every about is checked for length (100 to 300), the enricher's own rejections, English, the app name, and garbled edits ("the the app", a sentence that starts lowercase). `trap` is how often the model kept a description that fails its case. `rewrite` is how often it wrote over one labeled `keep`.
 
 Only `train` is exported. Tune prompts and checks against `dev`. Run `test` to compare models, and do not label from its failures.
+
+`-as dev` or `-as test` drafts new dev or test cases instead of train. They are model-labeled like any draft, so they go to `evals/about-review.jsonl`, and only count once a person has checked them and moved them to `evals/about.jsonl`.
+
+## Reviewing drafts
+
+```
+make review
+```
+
+This opens a local page at `http://127.0.0.1:8787` that walks through every pending case in `evals/about-review.jsonl` and `evals/security-review.jsonl`. It shows the evidence next to the labels, and checks each edit as you type, with the same checks the eval runs. Approve moves the case, as edited, to `evals/about.jsonl` or `evals/security.jsonl`, drops its `draft` tag, and tags it `reviewed`. Reject moves it to `evals/<eval>-rejected.jsonl` with your reason in its note. Both can be undone. Edits to a case you have not decided on yet are saved in the review file. Press `?` on the page for the keyboard shortcuts.
+
+## Security evals
+
+`evals/security.jsonl` holds labeled APKs: the scan rows, the source digest, and the listing, exactly as the enricher sends the security call. `securityeval` works like `abouteval`.
+
+```
+make eval-security                                   # dev split, LLM_MODEL
+make eval-security ARGS="-split test -n 3 -model my-finetune"
+make eval-security ARGS="-split all -show"           # no model: print the cases for review
+make eval-security ARGS="-export sft-security.jsonl" # train split as chat fine-tuning examples
+make eval-security ARGS="-mine data/snapshots/1.tar.zst -limit 300 -j 6" > mined.jsonl
+make eval-security ARGS="-draft mined.jsonl -as dev -model deepseek/deepseek-v4-pro" > evals/security-review.jsonl
+```
+
+`-mine` scans each listing's APK and reads its repository under `DATA_DIR`, as the enricher does, without calling the model. Listings are taken in a fixed order spread across the snapshot, and ids already in `-cases` are skipped. Each case is tagged by what it exercises: `tracker`, `ads`, `google`, `offline`, `location`, `camera-mic`, `system-access`, `packages`, `no-access`, `no-source`, and others.
+
+A case's `want`:
+
+- `warning`: whether the note opens with one warning sentence and a blank line.
+- `must`, `must_not`: phrase groups for the note, as in the about eval.
+- `notes`: phrase groups each fact's note contains, such as `{"camera": [["qr", "barcode"]]}`.
+- `action`: `keep` or `write`, only for a case with `current`, the stored note.
+- `security`, `facts`: the reference reply. Train cases need it to be exported.
+
+Every reply is also run through the enricher's own check, then checked against the prompt rules: under 500 characters, English, no hedges ("may", "could"), nothing about what the app lacks, no permission ids, safe, scan, or source in the note, a host only when the source shows it, one warning sentence at most. The fact rows must match the scan, one per fact with its value and nothing added. Each permission note starts with its permission id, and a tracking or ads note names each library. `missed` is how often a note that needs a warning had none. `extra` is how often one opened with a warning it should not have.
 
 ## Environment
 

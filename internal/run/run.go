@@ -71,20 +71,15 @@ type Repo struct {
 }
 
 // Rows merges the scan, the model reply, and the repository into the fact
-// rows. gen is nil when the model was not asked. sent is true when the
-// model saw source excerpts.
-func Rows(rows []scan.Row, gen *generate.SecurityResult, sent bool, app generate.App, repo Repo) []scan.Row {
+// rows. gen is nil when the model was not asked.
+func Rows(rows []scan.Row, gen *generate.SecurityResult, app generate.App, repo Repo) []scan.Row {
 	rows = withoutFact(rows, "decentralized")
 	rows = withoutFact(rows, "accountless")
 	rows = withoutFact(rows, "open_source")
+	rows = withoutFact(rows, "e2ee")
 	rows = withoutFact(rows, "source_available")
 	if gen != nil {
-		facts := generate.Lock(gen.Facts, rows)
-		rows = claims(rows, facts)
 		rows = justify(rows, gen.Reason)
-	}
-	if !sent {
-		rows = withoutFact(rows, "e2ee")
 	}
 	rows = withoutUnbacked(rows, "offline_capable")
 	if !hasFact(rows, "offline_capable") {
@@ -222,22 +217,5 @@ func justify(rows []scan.Row, reason map[string]string) []scan.Row {
 		}
 		rows[i].Reason = text
 	}
-	return rows
-}
-
-// claims adds the model's e2ee where the scan has no row. tracking, ads,
-// and offline_capable come from the scan only: what the APK holds.
-func claims(rows []scan.Row, facts generate.Facts) []scan.Row {
-	have := map[string]bool{}
-	for _, row := range rows {
-		have[row.Fact] = true
-	}
-	add := func(fact, value string) {
-		if value != "yes" && value != "no" || have[fact] {
-			return
-		}
-		rows = append(rows, scan.Row{Fact: fact, Value: value, Basis: "listing"})
-	}
-	add("e2ee", facts.E2EE)
 	return rows
 }

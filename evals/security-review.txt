@@ -1,0 +1,3232 @@
+=== io.shubham0204.smollmandroid  [dev]  camera-mic draft
+name: SmolChat
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+source: 19009 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: audio|record|speech
+note microphone: speech|text
+security:
+  Records audio for speech-to-text input. Data stays on the phone.
+facts:
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO for the speech-to-text feature on the Manage Speech-to-Text screen."
+
+=== finance.valet.regtest  [dev]  camera-mic draft
+name: Regtest
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 7996 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera|qr|scan
+must_not: fiat, lightning, immortan, valet.finance
+note camera: scanner|qr
+security:
+  Reads your camera to scan QR codes. It asks for no other sensitive access.
+facts:
+  "camera","yes","CAMERA for the scanner, which reads QR codes."
+  "google_services","no",""
+
+=== net.sourceforge.dibdib.android.dib2qm  [dev]  no-access draft
+name: Dib2Qm
+scan:
+  google_services            no  
+source: 22328 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== org.parres.whitenoise  [dev]  camera-mic google draft
+name: White Noise
+summary: A truly secure and private messenger that's lightning fast, infinitely scalable, and identity-free.
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services
+source: 13116 bytes, sections Readme, Project, Uses, Account, Signals
+labels: warning false
+must: camera|qr + push|notification
+note camera: qr|scanner
+security:
+  Uses the camera to scan QR codes. Google services provide push notifications through Firebase Cloud Messaging.
+facts:
+  "camera","yes","CAMERA for the QR scanner, which reads codes to add contacts or join groups."
+  "google_services","yes","Google Play services and Firebase Cloud Messaging deliver push notifications."
+
+=== com.thorium.webview  [dev]  google no-access draft
+name: Android System WebView
+scan:
+  google_services            yes Google Play services: Android Vision, Google Play services: Google Mobile Services
+source: 3269 bytes, sections Readme, Project, Uses
+labels: warning false
+must: vision
+note google_services: vision
+security:
+  It uses Google Play services for Android Vision.
+facts:
+  "google_services","yes","Uses Google Play services for Android Vision."
+
+=== me.deflock.deflockapp  [dev]  location google draft
+name: DeFlock
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Google Mobile Services
+source: 30732 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: location|map|center|nearby|surveillance
+note coarse_location: map|nearby|surveillance|center|location
+note fine_location: map|nearby|surveillance|center|location
+note google_services: location|map
+security:
+  Reads your precise location to show nearby surveillance cameras on a map and to center the map on your position. Location data stays on the phone.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which shows nearby surveillance devices and centers on your location."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen, which shows nearby surveillance devices and centers on your location."
+  "google_services","yes","Uses Google Play services for location tracking on the map."
+
+=== com.ravenfeld.panoramax.baba  [dev]  camera-mic location google draft
+name: Baba
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Google Mobile Services
+source: 21404 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: location + geotag + map + photo + panoramax
+must_not: convenience, flexibility, editing, revolutionizes
+note camera: photo + panoramax
+note coarse_location: map + geotag
+note fine_location: map + geotag
+security:
+  Reads your location to geotag photos and show your position on a map. Sends photos and location to api.panoramax.xyz. Uses Google Play services for location.
+facts:
+  "camera","yes","CAMERA to take photos for submission to the Panoramax project."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen and to geotag photos."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen and to geotag photos."
+  "google_services","yes","Uses Google Play services for location."
+
+=== pl.blach.sunmachine  [dev]  location offline draft
+name: Sunmachine
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4697 bytes, sections Readme, Project, Uses
+labels: warning false
+must: location|motion|light|sensor|auto
+note coarse_location: auto|mode|motion|light|sensor
+note fine_location: auto|mode|motion|light|sensor
+security:
+  Reads your location to use motion and light sensors for automatic lighting control. Data stays on the phone.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the auto mode, which uses motion and light sensors to turn the light on or off."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the auto mode, which uses motion and light sensors to turn the light on or off."
+  "google_services","no",""
+  "offline_capable","yes","The app has no internet access."
+
+=== dev.sebaubuntu.athena  [dev]  camera-mic location draft
+name: Athena
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  google_services            no  
+source: 19103 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: camera|sensor|characteristics|facing + location|gnss|hardware|enabled
+must_not: device info, material you, athena
+note camera: camera|characteristics|sensor|facing
+note coarse_location: gnss|hardware|location|enabled
+security:
+  Reads your coarse location to show GNSS hardware details and check if location is enabled. The camera permission reads camera characteristics to list camera sensors. It fetches a vulnerability report from storage.googleapis.com.
+facts:
+  "camera","yes","CAMERA reads camera characteristics to list camera sensors and their facing direction."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION reads coarse location to show GNSS hardware details and check if location is enabled."
+  "google_services","no",""
+
+=== fr.nocle.passegares  [dev]  location offline draft
+name: RailTrip
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 10764 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: location|station|radar|distance
+note coarse_location: radar|station
+note fine_location: station|distance
+security:
+  Reads your location to show nearby stations and calculate distance. Data stays on the phone.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the radar screen, which shows nearby stations."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the station detail screen, which calculates distance to the station."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.ergosign.offenbach.foss  [dev]  location draft
+name: Offenbach App
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 21669 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location + map
+note coarse_location: map
+note fine_location: map
+security:
+  Reads your location to show it on a map. The location stays on the phone.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which shows where you are."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen, which shows where you are."
+  "google_services","no",""
+
+=== pl.telenczuk.counterapp  [dev]  location draft
+name: Rue:barbe
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 4646 bytes, sections Readme, Project, Outbound, Uses
+labels: warning false
+must: location + reverse|geocod|address + maptiler
+note coarse_location: count|screen|position|reverse|geocod|address
+note fine_location: count|screen|position|reverse|geocod|address
+security:
+  Reads your location to show the counting position and find the address, and sends it to api.maptiler.com.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the counting screen, which shows your position and reverse geocodes it."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the counting screen, which shows your position and reverse geocodes it."
+  "google_services","no",""
+
+=== com.beradeep.aiyo  [dev]  no-access draft
+name: Aiyo
+scan:
+  google_services            no  
+source: 2748 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== io.github.leonidius20.beatinspector  [dev]  no-access draft
+name: BeatInspector
+scan:
+  google_services            no  
+source: 9104 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.miraisoft.wadoku  [dev]  no-access draft
+name: WaDoku
+scan:
+  google_services            no  
+source: 1013 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== org.dydlakcloud.resticopia  [dev]  no-access draft
+name: Resticopia
+scan:
+  google_services            no  
+source: 10535 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== cz.slaby.dpc  [dev]  no-access draft
+name: dpc
+scan:
+  google_services            no  
+source: 4457 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.dasp.worldcup2026  [dev]  no-access draft
+name: FIFA WorldCup 2026 Fixture Widget
+scan:
+  google_services            no  
+source: 4707 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== nodomain.freeyourgadget.internethelper  [dev]  no-access draft
+name: Internet Helper for Gadgetbridge
+scan:
+  google_services            no  
+source: 10363 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== xyz.linerly.searxist  [dev]  no-access draft
+name: searxist
+scan:
+  google_services            no  
+source: 12585 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.eknoes.inofficialgolem  [dev]  no-access draft
+name: Golem.de
+scan:
+  google_services            no  
+source: 955 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== org.adaptit.adaptitmobile  [dev]  no-access draft
+name: Adapt It Mobile
+scan:
+  google_services            no  
+source: 2292 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.kolktech.linxshare  [dev]  no-access draft
+name: LinxShare
+scan:
+  google_services            no  
+source: 8886 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== itkach.aard2  [dev]  no-access draft
+name: Aard 2
+scan:
+  google_services            no  
+source: 3122 bytes, sections Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== to.iris.nativeapp  [dev]  no-access no-source draft
+name: Iris Native
+summary: Native social app backed by local NostrDB and HashTree media.
+scan:
+  google_services            no  
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.chaosdorf.meteroid  [dev]  no-access no-source draft
+name: meteroid
+scan:
+  google_services            no  
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== jdm.apps.quizflow  [dev]  offline no-access draft
+name: QuizFlow
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1563 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.woheller69.exifedit  [dev]  offline no-access draft
+name: ExifEdit
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 762 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.jdfossapps.android.shopwithmom  [dev]  offline no-access draft
+name: Shop with mom
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1007 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== be.moraine.yapl  [dev]  offline no-access draft
+name: YAPL
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2949 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.jefftharris.passwdsafe  [dev]  offline no-access draft recheck
+name: PasswdSafe
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 15988 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.github.muellerma.coffee  [dev]  offline no-access draft
+name: Coffee
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2411 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.markusborg.test  [dev]  offline no-access draft
+name: RacketGhost
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2741 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.alberto97.aodtoggle  [dev]  offline no-access draft
+name: Always on display toggle
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 736 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== eu.mirkodi.swatchbeatclock  [dev]  offline no-access draft
+name: Swatch .beat clock
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 519 bytes, sections Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.cardijey.schulrechner  [dev]  offline no-access draft
+name: Schulrechner
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 10381 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.github.haykh.zham  [dev]  offline no-access draft
+name: Zham
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2585 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.billthefarmer.accordion  [dev]  offline no-access draft
+name: Accordion
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 283 bytes, sections Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== inc.flide.vi8  [dev]  offline no-access draft
+name: 8Vim
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 8829 bytes, sections Readme, Project, Signals
+labels: warning false
+must_not: keyboard, text, type, editor, clipboard
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app does not send data off the phone."
+
+=== at.co.schwaerzler.maximilian.doit  [dev]  offline no-access draft
+name: Do It
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3675 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.easwareapps.quoter  [dev]  offline no-access draft
+name: Quoter
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4769 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app works without internet access."
+
+=== hunterirving.forte  [dev]  offline no-access draft
+name: forte
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1177 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app works without an internet connection."
+
+=== ru.karasevm.privatednstoggle  [dev]  offline no-access draft
+name: Private DNS Quick Toggle
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3647 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.github.muntashirakon.AppManager  [dev]  packages system-access draft
+name: App Manager
+scan:
+  google_services            no  
+  query_all_packages         yes QUERY_ALL_PACKAGES
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+  usage_stats                yes PACKAGE_USAGE_STATS
+source: 30891 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning true
+must: app|usag + instal + draw|overlay + packag
+must_not: virustotal, clipboard, telegram, aurora, fdroid, backup
+note query_all_packages: no|use
+note request_install_packages: no|use
+note system_alert_window: no|use
+note usage_stats: no|use
+security:
+  It can read your app usage, install apps, draw over other apps, and see all installed packages.
+  
+  No use is shown for these permissions.
+facts:
+  "google_services","no",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES: no use is shown."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES: no use is shown."
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW: no use is shown."
+  "usage_stats","yes","PACKAGE_USAGE_STATS: no use is shown."
+
+=== org.fossify.filemanager  [dev]  offline packages draft
+name: File Manager
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+source: 7180 bytes, sections Readme, Project, Uses
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES: the source shows no use."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.Vali98.ChatterUI  [dev]  camera-mic google system-access draft
+name: ChatterUI
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services
+  microphone                 yes RECORD_AUDIO
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 18487 bytes, sections Readme, Project, Outbound, Uses
+labels: warning true
+must: camera + push|notification + microphone + system|alert|window
+must_not: llama, model, character, assistant, frontend
+note camera: camera|sheet|picture|chat
+note microphone: record_audio|no|use
+note system_alert_window: system_alert_window|no|use
+security:
+  The microphone and system alert window have no shown use.
+  
+  Uses the camera to take pictures for chats. Uses Google Cloud Messaging for push notifications.
+facts:
+  "camera","yes","CAMERA for the camera sheet, which takes a picture for the chat."
+  "google_services","yes","Google Cloud Messaging for push notifications."
+  "microphone","yes","RECORD_AUDIO shows no use."
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW shows no use."
+
+=== se.lublin.mumla  [dev]  camera-mic system-access draft
+name: Mumla
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 18570 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: audio|record|microphon + overlay|push-to-talk
+note microphone: audio|record|mumble
+note system_alert_window: overlay|push-to-talk
+security:
+  Records audio to send to Mumble servers you connect to. Displays a push-to-talk overlay on top of other apps.
+facts:
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO to send your voice to Mumble servers you connect to."
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW to display a push-to-talk overlay on top of other apps."
+
+=== com.trapplab.nfc_radio  [dev]  system-access draft
+name: NFC Radio
+scan:
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 17562 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: overlay|dimmed|screen
+note system_alert_window: overlay|dimmed|screen
+security:
+  Uses a screen overlay to dim the display during playback.
+facts:
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW for a dimmed screen overlay during playback."
+  "google_services","no",""
+
+=== felixwiemuth.simplereminder  [dev]  offline tracker draft
+name: SimpleReminder
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  tracking                   yes ACRA
+source: 10030 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: crash
+note tracking: acra|crash
+security:
+  ACRA crash reporting sits next to the data on the phone.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app has no internet permission, so data stays on the phone."
+  "tracking","yes","ACRA crash reporting sits next to the data on the phone."
+
+=== com.minibits_wallet  [dev]  camera-mic google tracker draft
+name: Minibits Wallet
+summary: Minibits is a Bitcoin Lightning and ecash wallet that deliver instant, low-cost, and private value transfers — even when the payer is offline.
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Fido (GMS), Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services
+  tracking                   yes Invertase RNFirebase, Sentry SDK for Java
+source: 22465 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: qr + push|notif + analytics|crash|report
+must_not: ecash, lightning, bitcoin, mint, nostr
+note camera: qr
+note google_services: push|notif
+note tracking: invertase|rnfirebase + sentry
+security:
+  Invertase RNFirebase and Sentry SDK can send analytics and crash reports off the phone.
+  
+  Uses the camera to scan QR codes. Google Play services and Firebase Cloud Messaging handle push notifications.
+facts:
+  "camera","yes","CAMERA for scanning QR codes."
+  "google_services","yes","Uses Google Play services and Firebase Cloud Messaging for push notifications."
+  "tracking","yes","Invertase RNFirebase and Sentry SDK for Java can send analytics and crash reports off the phone."
+
+=== org.tasks  [test]  location background-location tracker draft
+name: Tasks
+scan:
+  coarse_location            yes ACCESS_BACKGROUND_LOCATION, ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION
+  google_services            no  
+  tracking                   yes OpenCensus
+source: 26100 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning true
+must: location + mapbox + opencensus|usage
+must_not: astrid, pebble, desktop, google drive, firebase, crashlytics
+note coarse_location: background|location|reminder|place|search|mapbox
+note fine_location: background|location|reminder|place|search|mapbox
+note tracking: opencensus
+security:
+  Reads your location to show nearby places and trigger location-based reminders, and sends it to api.mapbox.com.
+  
+  OpenCensus can send usage data off the phone.
+facts:
+  "coarse_location","yes","ACCESS_BACKGROUND_LOCATION and ACCESS_COARSE_LOCATION for location-based reminders and place search, which sends coordinates to api.mapbox.com."
+  "fine_location","yes","ACCESS_BACKGROUND_LOCATION and ACCESS_FINE_LOCATION for location-based reminders and place search, which sends coordinates to api.mapbox.com."
+  "google_services","no",""
+  "tracking","yes","OpenCensus can send usage data off the phone."
+
+=== com.easwareapps.transparentwidget  [test]  camera-mic offline draft
+name: Transparent Widget
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2862 bytes, sections Project, Uses
+labels: warning false
+note camera: toggle|flash
+security:
+  It asks for no sensitive access.
+facts:
+  "camera","yes","CAMERA for the toggle flash action, which turns the flashlight on or off."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.food.opencook  [test]  camera-mic draft
+name: openCook
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 23114 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera + scan + recipe|barcode|cookbook
+note camera: camera|screen + capture|scan + cookbook|barcode
+security:
+  Uses the camera to scan recipe pages and barcodes. The photo stays on the phone unless you send it to your own server.
+facts:
+  "camera","yes","CAMERA for the camera screen that captures cookbook pages and scans product barcodes."
+  "google_services","no",""
+
+=== de.schildbach.wallet_test  [test]  camera-mic draft
+name: Bitcoin Wallet [testnet3]
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 24485 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera|qr|scan
+note camera: qr|scan|address
+security:
+  Reads your camera to scan QR codes for Bitcoin addresses.
+facts:
+  "camera","yes","CAMERA for scanning QR codes to read Bitcoin addresses and payment requests."
+  "google_services","no",""
+
+=== info.ilyac.pani  [test]  camera-mic offline draft
+name: Pani
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4722 bytes, sections Readme, Project, Uses
+labels: warning false
+must: camera
+note camera: capture|raw|image|metadata
+security:
+  Uses the camera to capture RAW images and metadata, which stay on the phone.
+facts:
+  "camera","yes","CAMERA to capture RAW images and metadata."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.github.leonidius20.recorder.lite  [test]  camera-mic offline draft
+name: Recording Studio Lite
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  offline_capable            yes No INTERNET
+source: 11950 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: record|audio|microphon
+note microphone: record|audio|sound|microphon
+security:
+  It records audio through the microphone. Data stays on the phone.
+facts:
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO to capture audio for the sound recorder."
+  "offline_capable","yes",""
+
+=== me.proton.android.calendar  [test]  camera-mic contacts google tracker draft
+name: Proton Calendar
+scan:
+  camera                     yes CAMERA
+  contacts                   yes READ_CONTACTS
+  google_services            yes Google Play services: Fido (GMS), Google Play services: Google Mobile Services
+  tracking                   yes Sentry SDK for Java
+source: 33418 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning true
+must: contact|attendee + crash|report|sentry + fido|authenticate
+must_not: end-to-end, zero-access, swiss, hipaa, gdpr
+note camera: conference|video|icon
+note contacts: attendee|event|form
+note google_services: fido|authenticate
+note tracking: sentry|crash|report
+security:
+  The Sentry SDK can send crash reports off the phone.
+  
+  Reads your contacts to add attendees to events. Google Play services is used for FIDO authentication.
+facts:
+  "camera","yes","CAMERA for the event form, which shows a video camera icon for conference links."
+  "contacts","yes","READ_CONTACTS for the event form, which reads device contacts to add attendees."
+  "google_services","yes","Uses Google Play services for FIDO authentication."
+  "tracking","yes","Sentry SDK for Java can send crash reports off the phone."
+
+=== com.reloado.auth  [test]  camera-mic draft
+name: Reloado Auth
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+source: 10938 bytes, sections Readme, Project, Outbound, Uses, Account
+labels: warning true
+must: camera|scan|qr + microphone|no|use
+must_not: biometric, offline, fingerprint
+note camera: scan|qr
+note microphone: no|use
+security:
+  The microphone access has no shown use.
+  
+  Uses the camera to scan QR codes for adding accounts. Sends your email, password, and encrypted vault data to auth.reloado.com for cloud sync.
+facts:
+  "camera","yes","CAMERA for scanning QR codes when adding accounts."
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO has no shown use."
+
+=== ch.martinstoeckli.silentnotes  [test]  no-access draft
+name: SilentNotes
+scan:
+  google_services            no  
+source: 5606 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.poupa.vinylmusicplayer  [test]  google no-access draft
+name: Vinyl Music Player
+scan:
+  google_services            yes Google Play services: Android for Cars
+source: 22919 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: google|play|android|auto
+note google_services: android|auto
+security:
+  Fetches artist images from Deezer and album or artist info from ws.audioscrobbler.com when metadata download is enabled. Google Play services is used for Android Auto support.
+facts:
+  "google_services","yes","Uses Google Play services for Android Auto support."
+
+=== com.berdik.macsposed  [test]  google no-access draft
+name: MACsposed
+scan:
+  google_services            yes Google Play services: Google Mobile Services
+source: 4100 bytes, sections Readme, Project, Uses
+labels: warning false
+must: purchas|licens
+note google_services: purchas|licens
+security:
+  It uses Google Play services for in-app purchases and licensing.
+facts:
+  "google_services","yes","Uses Google Play services for in-app purchases and license checks."
+
+=== me.echeung.moemoekyun  [test]  google no-access draft
+name: LISTEN.moe
+scan:
+  google_services            yes Google Play services: Android for Cars
+source: 15223 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: android auto
+note google_services: android auto
+security:
+  Uses Google Play services for Android Auto. It connects to cdn.listen.moe to stream music and to a socket for updates.
+facts:
+  "google_services","yes","Uses Google Play services for Android Auto."
+
+=== xyz.regulad.closecircuit  [test]  location draft
+name: Close Circuit
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 11960 bytes, sections Readme, Project, Outbound, Uses
+labels: warning false
+must: location|wi-fi|camera|discover|network
+must_not: backup, baby, monitor, cctv, airgap, offline
+note coarse_location: wi-fi|discover|camera
+note fine_location: wi-fi|discover|camera
+security:
+  Reads your location to discover nearby Wi-Fi cameras, and sends discovery probes over the local network.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for Wi-Fi Direct and network discovery, which scans for nearby cameras."
+  "fine_location","yes","ACCESS_FINE_LOCATION for Wi-Fi Direct and network discovery, which scans for nearby cameras."
+  "google_services","no",""
+
+=== org.traffxml.roadeagle  [test]  location draft
+name: RoadEagle
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  google_services            no  
+source: 3127 bytes, sections Project, Uses, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION: The source shows no use."
+  "google_services","no",""
+
+=== com.linkedcamera.app  [test]  camera-mic location draft
+name: Linked Camera
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+source: 22557 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location|gps|geotag + camera|photo|video + microphone|record|video
+must_not: tracking, analytics, firebase, google
+note camera: photo|video
+note coarse_location: gps|geotag
+note fine_location: gps|geotag
+note microphone: video|record
+security:
+  Reads your location to embed GPS coordinates in photos. The camera and microphone are used for taking photos and recording video. Data is sent to your own Nextcloud server.
+facts:
+  "camera","yes","CAMERA for taking photos and recording video."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for embedding GPS coordinates in photos."
+  "fine_location","yes","ACCESS_FINE_LOCATION for embedding GPS coordinates in photos."
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO for recording video."
+
+=== fr.emersion.goguma  [test]  location camera-mic draft
+name: Goguma
+summary: An IRC client for mobile devices
+scan:
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+source: 20127 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location|share|message|geo + audio|record|voice|message + push|token|pushgarden.emersion.fr
+must_not: bouncer, offline-first, lightweight, cross-platform, modern, nightly
+note fine_location: chat|composer|share|location|geo
+note microphone: chat|composer|record|voice|message
+security:
+  Reads your location to share it in a chat message. Records audio to send voice messages. Sends push notification tokens to pushgarden.emersion.fr.
+facts:
+  "fine_location","yes","ACCESS_FINE_LOCATION for the chat composer, which shares your current location as a geo URI in a message."
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO for the chat composer, which records voice messages to send."
+
+=== net.retiolus.natinfo  [test]  location draft
+name: NATINFo+
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 25619 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: location + geocode|address + nominatim
+note coarse_location: road|point|locator + geocode
+note fine_location: road|point|locator + geocode
+security:
+  Reads your location to find nearby road points and geocode addresses, and sends it to nominatim.openstreetmap.org.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the road point locator, which finds nearby points and geocodes addresses."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the road point locator, which finds nearby points and geocodes addresses."
+  "google_services","no",""
+
+=== com.martinhammer.tickdroid  [test]  no-access draft
+name: Tickdroid
+scan:
+  google_services            no  
+source: 15335 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== dev.mateusznowak.demodulate  [test]  no-access draft
+name: Demodulate
+scan:
+  google_services            no  
+source: 4260 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== id.thony.android.quranlite  [test]  no-access draft
+name: Qur'an Lite
+scan:
+  google_services            no  
+source: 3470 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.dxku.hongit  [test]  no-access draft
+name: Hongeet
+scan:
+  google_services            no  
+source: 21009 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.yangdai.opennote  [test]  no-access draft
+name: Open Note
+scan:
+  google_services            no  
+source: 10558 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.plektos.app  [test]  no-access draft
+name: Plektos
+summary: Nostr calendar app for events and scheduling
+scan:
+  google_services            no  
+source: 14281 bytes, sections Readme, Project, Outbound, Account
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.surfaceocean.nexttraceroute  [test]  no-access draft
+name: NextTraceroute
+scan:
+  google_services            no  
+source: 20299 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.wbpxre150.unjumbleapp  [test]  no-access draft
+name: UnjumbleApp
+scan:
+  google_services            no  
+source: 9915 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.ulicae.cinelog  [test]  no-access draft
+name: CineLog
+scan:
+  google_services            no  
+source: 1763 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== dev.debene.gopher  [test]  no-access draft
+name: DeBurrow
+scan:
+  google_services            no  
+source: 2109 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== org.application.darkshiki  [test]  no-access draft
+name: DarkShiki
+scan:
+  google_services            no  
+source: 14771 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.hermeticvm.linkahest  [test]  no-access draft
+name: Linkahest
+scan:
+  google_services            no  
+source: 7911 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.voca.app  [test]  no-access no-source draft
+name: Voca
+summary: If you can read it, Voca can say it.
+scan:
+  google_services            no  
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.tre.openstreetmapwiki  [test]  no-access no-source draft
+name: OpenStreetMap wiki app
+scan:
+  google_services            no  
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.github.warren_bank.slideshow_screensaver  [test]  offline no-access draft
+name: Slideshow Screensaver
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1424 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.gymmane.app  [test]  offline no-access draft
+name: GymMane
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 10923 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.github.saeeddev94.pixelnr  [test]  offline no-access draft
+name: Pixel 5G
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 861 bytes, sections Readme, Project
+labels: warning false
+must_not: modem, pixel, root, nr mode, jetbrains
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.bnyro.clock  [test]  offline no-access draft
+name: Clock You
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 14221 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.taotao.healthtracker  [test]  offline no-access draft
+name: Personal Health Records
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4686 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.mwarning.memento  [test]  offline no-access draft
+name: Memento
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 928 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.leverbursche.meinegleitzeitapp  [test]  offline no-access draft
+name: meine Gleitzeit
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1307 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== montafra.beam  [test]  offline no-access draft
+name: Beam
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3636 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.klimek.compass  [test]  offline no-access draft
+name: Compass Tile
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 693 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.syss.MifareClassicTool  [test]  offline no-access draft
+name: MIFARE Classic Tool
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 9321 bytes, sections Readme, Project, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== ca.toadlybroodle.minimalist  [test]  offline no-access draft
+name: MinimaList
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 9071 bytes, sections Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== dev.abhaycloud.fdtracker  [test]  offline no-access draft
+name: FDTracker
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3232 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== se.arctosoft.vault  [test]  offline no-access draft
+name: Valv
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4342 bytes, sections Readme, Project, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.sudoq  [test]  offline no-access draft
+name: SudoQ
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1927 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.shpak.quicktimer  [test]  offline no-access draft
+name: Quick Timer
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1596 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.wbftw.weil.passwordgenerator  [test]  offline no-access draft
+name: PasswordGenerator
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 5695 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== s1m.savertuner  [test]  offline no-access draft
+name: SaverTuner
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 6550 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.github.bravenewpipe  [test]  google packages system-access tracker draft
+name: BravePipe
+scan:
+  google_services            yes Google Play services: Android for Cars
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+  tracking                   yes ACRA
+source: 33936 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: google|play|car + crash|report + acra
+must_not: streaming, youtube, peertube, newpipe
+note google_services: car
+note tracking: acra|crash
+security:
+  ACRA can send crash reports off the phone.
+  
+  Uses Google Play services for Android for Cars. No use shown for the install packages and display over other apps permissions.
+facts:
+  "google_services","yes","Uses Google Play services for Android for Cars."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES: no use shown."
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW: no use shown."
+  "tracking","yes","ACRA can send crash reports off the phone."
+
+=== io.github.saeeddev94.xray  [test]  camera-mic packages draft
+name: Xray
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  query_all_packages         yes QUERY_ALL_PACKAGES
+source: 11719 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera|scan|qr + app|rout|vpn
+note camera: scan|qr
+note query_all_packages: app|rout|vpn
+security:
+  Uses the camera to scan QR codes for adding configurations. It can see all installed apps to let you pick which ones to route through the VPN.
+facts:
+  "camera","yes","CAMERA for the Scanner screen, which scans QR codes to add configurations."
+  "google_services","no",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES for the Apps Routing screen, which lists installed apps so you can choose which ones go through the VPN."
+
+=== tech.bogomolov.incomingsmsgateway  [test]  sms-calls draft
+name: Sms Forwarder
+scan:
+  google_services            no  
+  receive_sms                yes RECEIVE_SMS
+source: 21751 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: sms|message
+note receive_sms: forward|url
+security:
+  Reads your incoming SMS messages and forwards them to a URL you set.
+  
+  No use of the SMS permission is shown.
+facts:
+  "receive_sms","yes","RECEIVE_SMS for forwarding incoming SMS to a URL you set."
+  "google_services","no",""
+
+=== org.fastpool.signerguide  [test]  system-access tracker draft
+name: Signer Guide
+summary: Bitcoin staking for STX: lock in your own wallet, earn sats every week.
+scan:
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+  tracking                   yes Play Install Referrer Library
+source: 28003 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: draw|overlay + play|install|referrer
+must_not: bitcoin, staking, signer, pool, fastpool
+note system_alert_window: no|use
+note tracking: play|install|referrer
+security:
+  It can draw over other apps, but no use of that permission is shown.
+  
+  The Play Install Referrer Library can send data off the phone.
+facts:
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW is declared but no use is shown."
+  "google_services","no",""
+  "tracking","yes","Play Install Referrer Library can send data off the phone."
+
+=== com.mouzinho.pokebase  [test]  system-access draft
+name: Pokebase
+scan:
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 9241 bytes, sections Readme, Project, Outbound, Uses
+labels: warning false
+note system_alert_window: alert|save|image|gallery
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW shows an alert when saving an image to your gallery."
+
+=== org.osmdroid  [test]  location tracker draft
+name: Open Map
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  tracking                   yes ACRA
+source: 25148 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: location + crash
+must_not: open street map, openstreetmap, tile
+note coarse_location: map
+note fine_location: map
+note tracking: acra
+security:
+  The ACRA library can send crash reports off the phone.
+  
+  Reads your location to show it on the map.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which shows where you are."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen, which shows where you are."
+  "google_services","no",""
+  "tracking","yes","ACRA can send crash reports off the phone."
+
+=== me.kerooker.rpgcharactergenerator  [test]  tracker draft
+name: RPG NPC Generator
+scan:
+  google_services            no  
+  tracking                   yes PostHog, Sentry SDK for Java
+source: 15877 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: posthog|sentry
+note tracking: posthog + sentry
+security:
+  PostHog and Sentry SDK for Java can send data off the phone.
+  
+  PostHog collects usage analytics and Sentry SDK for Java collects crash reports.
+facts:
+  "google_services","no",""
+  "tracking","yes","PostHog for usage analytics and Sentry SDK for Java for crash reports."
+
+=== com.pesashift.app  [train]  ads google tracker draft
+name: PesaShift
+summary: Read your M-PESA and Airtel Money statement on your phone. See every fee.
+scan:
+  ads                        yes Huawei Mobile Services (HMS) Core
+  google_services            yes Google Play services: Google Mobile Services
+  tracking                   yes Huawei Mobile Services (HMS) Core
+source: 14189 bytes, sections Readme, Project, Uses
+labels: warning true
+must: ads + purchas + tracking
+must_not: fuliza, airtel, mpesa, statement, password
+note ads: huawei|mobile|services|hms
+note google_services: purchas
+note tracking: huawei|mobile|services|hms
+security:
+  Huawei Mobile Services (HMS) Core can send data off the phone for ads and tracking.
+  
+  Uses Google Play services for in-app purchases. The internet permission is for sending messages you write and handling payments you start.
+facts:
+  "ads","yes","Huawei Mobile Services (HMS) Core can send data off the phone for ads."
+  "google_services","yes","Uses Google Play services for in-app purchases."
+  "tracking","yes","Huawei Mobile Services (HMS) Core can send data off the phone for tracking."
+
+=== org.getwhistle.whistle  [train]  camera-mic location background-location google draft
+name: Whistle
+summary: Decentralized group location sharing over Nostr + MLS
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_BACKGROUND_LOCATION, ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Google Mobile Services
+source: 14586 bytes, sections Readme, Project, Uses, Account, Signals
+labels: warning false
+must: location|share|group|background + camera|qr|scan|invite + google|play|ml|kit|barcode
+note camera: camera|qr|scan|invite
+note coarse_location: location|share|group|background
+note fine_location: location|share|group|background
+note google_services: ml|kit|barcode
+security:
+  Reads your location to share with your group, and can do so in the background. Uses the camera to scan QR codes for group invites. Google Play services is present for ML Kit barcode scanning.
+facts:
+  "camera","yes","CAMERA for scanning QR codes to join groups."
+  "coarse_location","yes","ACCESS_BACKGROUND_LOCATION, ACCESS_COARSE_LOCATION for sharing your approximate location with your group, and can do so in the background."
+  "fine_location","yes","ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION for sharing your precise location with your group, and can do so in the background."
+  "google_services","yes","Uses Google Play services for ML Kit barcode scanning."
+
+=== com.demosten.srednabg  [train]  location background-location system-access draft
+name: SrednaBG
+scan:
+  coarse_location            yes ACCESS_BACKGROUND_LOCATION, ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_BACKGROUND_LOCATION, ACCESS_FINE_LOCATION
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 20513 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location|gps|speed|average|zone + overlay|float
+must_not: srednabg.com, mapbox, maptiler, openstreetmap
+note coarse_location: speed|calculation|gps
+note fine_location: speed|calculation|gps
+note system_alert_window: overlay|float
+security:
+  Reads your location to calculate your average speed in camera zones. Location data stays on the phone. It can draw an overlay over other apps.
+facts:
+  "coarse_location","yes","ACCESS_BACKGROUND_LOCATION and ACCESS_COARSE_LOCATION for the speed calculation, which uses your GPS position."
+  "fine_location","yes","ACCESS_BACKGROUND_LOCATION and ACCESS_FINE_LOCATION for the speed calculation, which uses your GPS position."
+  "google_services","no",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW for the opt-in overlay that floats the live status over other apps."
+
+=== org.pixeldroid.app  [train]  camera-mic draft
+name: PixelDroid
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 22872 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: camera|photo|post
+note camera: post|creation
+security:
+  Uses the camera to take photos for posts. Data is sent to the Pixelfed instance you log in to.
+facts:
+  "camera","yes","CAMERA for the post creation screen, which takes photos."
+  "google_services","no",""
+
+=== io.github.pitonite.exch_cx  [train]  camera-mic draft
+name: eXch.
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 17123 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera|qr|scan
+note camera: qr|scan
+security:
+  Reads your camera to scan QR codes for order tracking.
+facts:
+  "camera","yes","CAMERA for the QR code scanner, which reads order information."
+  "google_services","no",""
+
+=== fr.dzx.audiosource  [train]  camera-mic offline draft
+name: Audio Source
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  offline_capable            yes No INTERNET
+source: 4921 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: microphone|record|audio|usb|adb|computer
+must_not: pulseaudio
+note microphone: record|audio|usb|adb
+security:
+  It records from the microphone to send audio over USB or ADB to a connected computer.
+facts:
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO to forward audio to a PC over USB or ADB."
+  "offline_capable","yes",""
+
+=== com.gorunjinian.metrovault  [train]  camera-mic offline draft
+name: Metro Vault
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 9529 bytes, sections Readme, Project, Uses, Account, Signals
+labels: warning false
+note camera: scan|qr|address
+security:
+  It asks for no sensitive access.
+facts:
+  "camera","yes","CAMERA scans QR codes to check Bitcoin addresses."
+  "google_services","no",""
+  "offline_capable","yes","The app has no internet permission."
+
+=== eu.mrogalski.saidit  [train]  camera-mic offline draft
+name: Echo
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  offline_capable            yes No INTERNET
+source: 8199 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: record|audio|microphon
+note microphone: record|audio|buffer
+security:
+  Records audio to keep a rolling buffer on the phone. Data stays on the phone.
+facts:
+  "microphone","yes","RECORD_AUDIO to record audio for the time-travel recording buffer."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.rouf.saht  [train]  camera-mic offline draft
+name: Sehat
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 12696 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: camera|heart|rate
+note camera: heart|rate
+security:
+  Uses the camera to measure your heart rate. Data stays on the phone.
+facts:
+  "camera","yes","CAMERA for the heart rate monitor, which analyzes your finger on the lens."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.glitterware.passy  [train]  camera-mic draft
+name: Passy
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 16718 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: camera|qr
+note camera: qr|scan
+security:
+  It asks for camera access to scan QR codes for synchronization. Data is encrypted and stored offline. The optional cloud sync sends data to api.glitterware.net.
+facts:
+  "camera","yes","CAMERA to scan QR codes for device synchronization."
+  "google_services","no",""
+
+=== org.keyoxide.keyoxide  [train]  camera-mic draft
+name: Keyoxide
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 8820 bytes, sections Readme, Project, Uses, Account
+labels: warning false
+must: qr|code|scan
+note camera: qr|code|scan
+security:
+  Scans QR codes to fetch profiles.
+facts:
+  "camera","yes","CAMERA for the QR code scanner, which reads codes to fetch profiles."
+  "google_services","no",""
+
+=== de.mm20.launcher2.release  [train]  location contacts packages draft
+name: Kvaesitso
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  contacts                   yes READ_CONTACTS
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  query_all_packages         yes QUERY_ALL_PACKAGES
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+source: 36235 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: location|weather|nearby|met.no|openweathermap|brightsky + contact|photo|icon|search
+must_not: crash report, usage track, ad library, google play, firebase, fcm push
+note coarse_location: weather|nearby|network
+note contacts: contact|photo|search
+note fine_location: weather|nearby|gps
+note query_all_packages: app|launcher|search
+note request_install_packages: apk|icon|search
+security:
+  Reads your location to show weather and sort nearby places, and sends it to api.met.no, api.openweathermap.org, and api.brightsky.dev. Reads your contacts to show contact icons in search results.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for weather and sorting nearby places, using network-based location."
+  "contacts","yes","READ_CONTACTS to load contact photos for search results."
+  "fine_location","yes","ACCESS_FINE_LOCATION for weather and sorting nearby places, using GPS."
+  "google_services","no",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES to list installed apps in the launcher search."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES to show a placeholder icon for APK files in search results."
+
+=== org.dystopia.email  [train]  contacts draft
+name: Email
+scan:
+  contacts                   yes READ_CONTACTS
+  google_services            no  
+source: 17917 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: contact|email|compose|pick|fill
+note contacts: compose|email|pick|fill
+security:
+  Reads your contacts to let you pick email addresses when composing a message. The data stays on your phone.
+facts:
+  "contacts","yes","READ_CONTACTS to fill in email addresses when you compose a message."
+  "google_services","no",""
+
+=== com.bittasker.app  [train]  camera-mic location google draft
+name: BitTasker
+summary: Bitcoin-powered gig economy platform connecting taskers and taskees
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Fido (GMS), Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services
+source: 6002 bytes, sections Project, Uses
+labels: warning false
+must: camera|qr + location|nearby|task
+note camera: qr|bitcoin|payment
+note coarse_location: nearby|task
+note fine_location: nearby|task
+security:
+  Uses the camera to scan QR codes for Bitcoin payments. Reads your location to show nearby tasks and taskers. Google services are used for push notifications and biometric authentication.
+facts:
+  "camera","yes","CAMERA to scan QR codes for Bitcoin payments."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION to show nearby tasks and taskers."
+  "fine_location","yes","ACCESS_FINE_LOCATION to show nearby tasks and taskers."
+  "google_services","yes","Google Play services for push notifications and Fido biometric authentication."
+
+=== com.theripper.cb_app  [train]  location google draft
+name: cb_app
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Google Mobile Services
+source: 18114 bytes, sections Readme, Project, Uses, Account, Signals
+labels: warning false
+must: location|map|station + location|map|center + map
+note coarse_location: map|station
+note fine_location: map|center
+note google_services: map
+security:
+  Reads your location to show nearby stations on a map, and sends it to cbappapi.rr.net.eu.org. Uses Google Play services for maps.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which shows stations near you."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen, which centers on where you are."
+  "google_services","yes","Uses Google Play services for maps."
+
+=== dev.gpxit.app  [train]  location google draft
+name: GPXIT
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            yes Google Play services: Google Mobile Services
+source: 24720 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location|map|station|position
+note coarse_location: map|station|position
+note fine_location: map|station|position
+security:
+  Reads your location to show your position on the map and to find nearby train stations. Google Play services is used for location accuracy.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which shows your position and nearby stations."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the map screen, which shows your position and nearby stations."
+  "google_services","yes","Google Play services for better location accuracy."
+
+=== me.d3sox.betternetworktiles.libre  [train]  location draft
+name: Better Network Tiles
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 10016 bytes, sections Readme, Project, Uses, Signals
+labels: warning true
+must: location + cellular|signal|service|state
+note coarse_location: cellular|signal|service|state
+security:
+  Fine location has no shown use.
+  
+  Reads your coarse location to check the cellular service state and signal strength for the network tiles.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION to read the cellular service state and signal strength for the network tiles."
+  "fine_location","yes","ACCESS_FINE_LOCATION is declared but the source shows no use."
+  "google_services","no",""
+
+=== org.noise_planet.noisecapture  [train]  location camera-mic draft
+name: NoiseCapture
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+source: 18086 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location|geotag|noise|measurement + audio|sound|record|measure
+note coarse_location: measurement|geotag|location
+note fine_location: measurement|geotag|location
+note microphone: measurement|audio|sound
+security:
+  Reads your location to geotag noise measurements, and records audio to measure sound levels. Location and audio data are sent to data.noise-planet.org when you share results.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the measurement screen, which records your location to geotag noise data."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the measurement screen, which records your location to geotag noise data."
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO for the measurement screen, which records audio to measure sound levels."
+
+=== org.kiwix.kiwixmobile.standalone  [train]  location draft
+name: Kiwix
+scan:
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 16265 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "fine_location","yes","ACCESS_FINE_LOCATION: the source shows no use."
+  "google_services","no",""
+
+=== de.csicar.ning  [train]  location draft
+name: Ning
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 4514 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+must: location|network|discover|nearby
+note coarse_location: network|discover
+note fine_location: network|discover
+security:
+  Reads your location to discover nearby networks and devices.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for network discovery, which uses your location to find nearby networks."
+  "fine_location","yes","ACCESS_FINE_LOCATION for network discovery, which uses your location to find nearby networks."
+  "google_services","no",""
+
+=== com.yinmik.waterquality  [train]  location offline draft
+name: Water Quality
+scan:
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3635 bytes, sections Readme, Project, Uses
+labels: warning false
+must: location + bluetooth
+note fine_location: bluetooth|scan
+security:
+  Reads your location to scan for Bluetooth water quality testers. Data stays on the phone.
+facts:
+  "fine_location","yes","ACCESS_FINE_LOCATION for Bluetooth scanning, which finds nearby water quality testers."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.secuso.privacyfriendlyactivitytracker  [train]  location offline draft
+name: Pedometer
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 5879 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION: The source shows no use."
+  "fine_location","yes","ACCESS_FINE_LOCATION: The source shows no use."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== dev.rubec.otoscope  [train]  location draft
+name: Otoscope
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+source: 6687 bytes, sections Readme, Project, Uses
+labels: warning false
+must: location|wi-fi|camera|discover|scan + location|wi-fi|network|name
+note coarse_location: wi-fi|scan|discover|camera
+note fine_location: wi-fi|scan|discover|camera|network|name
+security:
+  Reads your location to discover nearby Wi-Fi otoscope cameras and to name the current Wi-Fi network on some devices.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the Wi-Fi scan mode, which discovers nearby cameras."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the Wi-Fi scan mode, which discovers nearby cameras and names the current Wi-Fi network."
+  "google_services","no",""
+
+=== xyz.cmcdaniel.localcrop  [train]  location draft
+name: LocalCrop
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  google_services            no  
+source: 6217 bytes, sections Readme, Project, Uses
+labels: warning false
+must: location|map
+note coarse_location: map
+security:
+  Reads your location to show nearby farms and markets on a map.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the map screen, which centers on where you are."
+  "google_services","no",""
+
+=== net.forestany.mediacollection  [train]  no-access draft
+name: Media Collection
+scan:
+  google_services            no  
+source: 10687 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.bookstash.app  [train]  no-access draft
+name: BookStash
+scan:
+  google_services            no  
+source: 6296 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== eu.opencloud.android  [train]  no-access draft
+name: OpenCloud
+scan:
+  google_services            no  
+source: 21271 bytes, sections Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== app.polarbear  [train]  no-access draft
+name: Local Desktop
+scan:
+  google_services            no  
+source: 10601 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== at.linuxtage.Eventfahrplan  [train]  no-access draft
+name: Grazer Linuxtage Schedule
+scan:
+  google_services            no  
+source: 15604 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.mateusrodcosta.apps.vidyamusic  [train]  no-access draft
+name: Vidya Music
+scan:
+  google_services            no  
+source: 4133 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== app.govroam.getgovroam  [train]  no-access draft
+name: getgovroam
+scan:
+  google_services            no  
+source: 15609 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.collotsspot.ensemble  [train]  no-access draft
+name: Ensemble
+scan:
+  google_services            no  
+source: 18096 bytes, sections Readme, Project, Outbound, Account
+labels: warning false
+must: credential|login|token|authenticate + image|metadata|cover|artist|album
+must_not: stream, playback, speaker, queue, favorite, podcast
+security:
+  Sends your login credentials and authentication tokens to your own Music Assistant server. Fetches artist and album images from api.deezer.com, covers.openlibrary.org, and other metadata services.
+facts:
+  "google_services","no",""
+
+=== com.prayertimemuter  [train]  no-access draft
+name: Prayer Time Muter
+scan:
+  google_services            no  
+source: 11667 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== dev.elbullazul.linkguardian  [train]  no-access draft
+name: LinkGuardian
+scan:
+  google_services            no  
+source: 10605 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.limelight  [train]  no-access draft
+name: Moonlight
+scan:
+  google_services            no  
+source: 10830 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.dessalines.rankmyfavs  [train]  no-access draft
+name: Rank My Favs
+scan:
+  google_services            no  
+source: 1868 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== invalid.lena.rsend  [train]  no-access draft
+name: rsend
+scan:
+  google_services            no  
+source: 8264 bytes, sections Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.fabienli.dokuwiki  [train]  no-access draft
+name: Dokuwiki
+scan:
+  google_services            no  
+source: 7849 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.devmil.muzei.bingimageofthedayartsource  [train]  no-access draft
+name: Muzei - Bing Image of the Day
+scan:
+  google_services            no  
+source: 6393 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== info.metadude.android.congress.schedule  [train]  no-access draft recheck
+name: 39C3 Schedule
+scan:
+  google_services            no  
+source: 2202 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== eu.veldsoft.fish.rings  [train]  no-access draft
+name: Fish Rings for Android
+scan:
+  google_services            no  
+source: 826 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== app.wispar.wispar  [train]  no-access draft
+name: Wispar
+scan:
+  google_services            no  
+source: 17483 bytes, sections Readme, Project, Outbound, Account
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.determapp.android  [train]  no-access draft recheck
+name: DetermApp
+scan:
+  google_services            no  
+source: 11621 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== stasis.client.android  [train]  no-access draft
+name: stasis
+scan:
+  google_services            no  
+source: 19807 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.isayso.fire2kodi  [train]  no-access draft
+name: Fire2Kodi
+scan:
+  google_services            no  
+source: 21429 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== unofficial.tandoor.recipes  [train]  no-access draft
+name: Untare
+scan:
+  google_services            no  
+source: 1764 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.streamatico.polymarketviewer  [train]  no-access draft
+name: Polymarket Viewer
+scan:
+  google_services            no  
+source: 17987 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.serwylo.babybook  [train]  no-access draft
+name: Baby Book
+scan:
+  google_services            no  
+source: 10109 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.viscouspot.gitsync  [train]  no-access draft
+name: GitSync
+scan:
+  google_services            no  
+source: 22356 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== io.github.rufid  [train]  no-access draft
+name: Rufid
+scan:
+  google_services            no  
+source: 7789 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== v.blade  [train]  no-access draft
+name: Blade Player
+scan:
+  google_services            no  
+source: 27228 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+must: spotify|deezer|account|credential|login|sync|library
+security:
+  Sends your Spotify and Deezer account credentials to accounts.spotify.com and api.deezer.com to log in and sync your music library.
+facts:
+  "google_services","no",""
+
+=== acab.naiveha.upnpkino  [train]  no-access draft
+name: UPnP Kino
+scan:
+  google_services            no  
+source: 8212 bytes, sections Readme, Project, Outbound, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== net.e1547  [train]  no-access draft
+name: e1547
+scan:
+  google_services            no  
+source: 4203 bytes, sections Readme, Project, Account
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== de.niendo.ImapNotes3  [train]  no-access draft
+name: ImapNotes3
+scan:
+  google_services            no  
+source: 5875 bytes, sections Readme, Project, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.metalshard.hyperion  [train]  no-access no-source draft
+name: PB Schedule Viewer
+scan:
+  google_services            no  
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+
+=== com.timebinding.manhoodofhumanity  [train]  offline no-access no-source draft
+name: ManhoodOfHumanity
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: not read
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app works without an internet connection."
+
+=== com.hassaneltantawy.hisnelmoslem  [train]  offline no-access draft
+name: حصن المسلم
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4269 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.lukaspieper.gcam.services  [train]  offline no-access draft
+name: Gcam Services Provider
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1600 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app has no internet access, so data stays on the phone."
+
+=== jp.takke.cpustats  [train]  offline no-access draft
+name: CPU Stats
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4390 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","Does not access the internet."
+
+=== com.razielo.boutscoring  [train]  offline no-access draft
+name: BoutScoring
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1579 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.grating.styncynotes  [train]  offline no-access draft
+name: StyncyNotes
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1476 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.andstatus.todoagenda  [train]  offline no-access draft
+name: Todo Agenda
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 870 bytes, sections Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.wqar.quran_mem_helper  [train]  offline no-access draft
+name: Quran Revision Companion
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1225 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.wchung.qrshare  [train]  offline no-access draft
+name: QR share
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3789 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== eu.hxreborn.cleanshare  [train]  offline no-access draft
+name: CleanShare
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4516 bytes, sections Readme, Project, Outbound
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.kaiserdragon.callforwardingstatus  [train]  offline no-access draft
+name: CallForwardingStatus
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 6245 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.vayunmathur.games.unblockjam  [train]  offline no-access draft
+name: Unblock Jam
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 22607 bytes, sections Readme, Project, Outbound, Account, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== uk.co.busydoingnothing.prevo  [train]  offline no-access draft
+name: PReVo
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2312 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== uk.me.paraskos.pdfrenderer  [train]  offline no-access draft
+name: PDF to Images
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 992 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== net.basov.omn.fdroid  [train]  offline no-access draft
+name: Open Markdown Notes (legacy mode)
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 7319 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.dingleinc.texttoolspro  [train]  offline no-access draft
+name: Expandroid
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 8955 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.codeberg.rozworld.finalrozgamenew  [train]  offline no-access draft
+name: FinalRozGameNew
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3208 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== net.pejici.easydice  [train]  offline no-access draft
+name: Easy Dice
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 749 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.sesu8642.feudaltactics  [train]  offline no-access draft
+name: Feudal Tactics
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 4719 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== xyz.deepdaikon.quinb  [train]  offline no-access draft
+name: Quinb
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2033 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== me.hackerchick.raisetoanswer  [train]  offline no-access draft
+name: Raise To Answer
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3957 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes","The app works without an internet connection."
+
+=== com.noirgym.app  [train]  offline no-access draft
+name: Noir Gym
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2569 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== de.georgsieber.ballbreak  [train]  offline no-access draft
+name: BallBreak
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 406 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.fpuellen.simplyscored  [train]  offline no-access draft
+name: Simply Scored
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1985 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== dubrowgn.wattz  [train]  offline no-access draft
+name: Wattz
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1169 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== net.ygingras.minutemaze  [train]  offline no-access draft
+name: Minute Maze
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1420 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== prz.rutedu.app  [train]  offline no-access draft
+name: RUTEdu
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2473 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== su.comp.bk  [train]  offline no-access draft recheck
+name: BkEmu
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 2739 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== eu.artectrex.bunny  [train]  offline no-access draft
+name: Bunny Media Editor
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1795 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== org.xphnx.ameixa  [train]  offline no-access draft
+name: Ameixa
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 736 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.inod.screenofftimer  [train]  offline no-access draft
+name: Screen Off Timer
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 9015 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.neyhard.hamstudy  [train]  offline no-access draft
+name: KC3ICT Ham Study
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 3755 bytes, sections Readme, Project, Signals
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.econverter.app  [train]  offline no-access draft
+name: EbookConverter
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1428 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== me.danb.retherm  [train]  offline no-access draft
+name: Retherm
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 1613 bytes, sections Readme, Project
+labels: warning false
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== io.github.antoinepirlot.satunes  [train]  google packages draft
+name: Satunes
+scan:
+  google_services            yes Google Play services: Android for Cars
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+source: 15958 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: android|auto + download|update|codeberg
+note google_services: android|auto
+note request_install_packages: download|update|codeberg
+security:
+  It uses Google Play services for Android Auto. It can download and prompt to install updates from codeberg.org.
+facts:
+  "google_services","yes","Uses Google Play services for Android Auto."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES to download updates from codeberg.org and prompt to install them."
+
+=== dev.rx.app2proxy  [train]  offline packages draft
+name: App2Proxy
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  query_all_packages         yes QUERY_ALL_PACKAGES
+source: 7625 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+note query_all_packages: list|app|choos|proxi
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES lists installed apps so you can choose which to proxy."
+
+=== net.slions.fulguris.full.fdroid  [train]  camera-mic location packages draft
+name: Fulguris
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+source: 37940 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: camera + microphone + location + install
+must_not: fulguris, slions
+note camera: camera|no|use
+note coarse_location: coarse|no|use
+note fine_location: fine|no|use
+note microphone: record|audio|no|use
+note request_install_packages: request|install|no|use
+security:
+  Camera, microphone, and location access have no shown use.
+  
+  It can also request to install packages.
+facts:
+  "camera","yes","CAMERA has no shown use."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION has no shown use."
+  "fine_location","yes","ACCESS_FINE_LOCATION has no shown use."
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO has no shown use."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES has no shown use."
+
+=== com.afkanerd.sw0b  [train]  contacts sms-calls draft
+name: RelaySMS
+scan:
+  contacts                   yes READ_CONTACTS
+  google_services            no  
+  read_sms                   yes READ_SMS
+  receive_sms                yes RECEIVE_SMS
+  send_sms                   yes SEND_SMS
+source: 24408 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: contact + sms|messag
+must_not: gmail, twitter, telegram, oauth, vault, encrypt
+note contacts: gateway|client
+note read_sms: rout
+note receive_sms: rout
+note send_sms: rout
+security:
+  Reads your contacts to select gateway clients. Reads, receives, and sends SMS to route messages through the app.
+facts:
+  "contacts","yes","READ_CONTACTS to select a gateway client from your contacts."
+  "google_services","no",""
+  "read_sms","yes","READ_SMS to route messages through the app."
+  "receive_sms","yes","RECEIVE_SMS to route messages through the app."
+  "send_sms","yes","SEND_SMS to route messages through the app."
+
+=== com.callblocker  [train]  sms-calls contacts offline draft
+name: Call Blocker
+scan:
+  call_log                   yes READ_CALL_LOG
+  contacts                   yes READ_CONTACTS
+  google_services            no  
+  offline_capable            yes No INTERNET
+source: 11871 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: call|log|sim + contact|block
+note call_log: sim|block|call
+note contacts: block|contact
+security:
+  It reads your call log to find the SIM card used for a blocked call, and reads your contacts to check numbers against your block list. The data stays on the phone.
+facts:
+  "call_log","yes","READ_CALL_LOG to look up a blocked number in the call log and record which SIM card it used."
+  "contacts","yes","READ_CONTACTS to check incoming numbers against the block list."
+  "google_services","no",""
+  "offline_capable","yes",""
+
+=== com.yuroyami.synkplay  [train]  system-access draft
+name: Synkplay
+scan:
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 8705 bytes, sections Readme, Project, Uses, Signals
+labels: warning true
+must: draw|overlay|window
+note system_alert_window: draw|overlay|window
+security:
+  It can draw over other apps, but no use of that permission is shown.
+  
+  It asks for no other sensitive access.
+facts:
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW for drawing over other apps, but no use is shown."
+  "google_services","no",""
+
+=== io.github.deweyreed.timer.other  [train]  offline system-access draft
+name: TimeR Machine
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 13580 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: draw|overlay|alert|timer
+note system_alert_window: timer|alert|overlay
+security:
+  It can draw over other apps to show timer alerts.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW shows timer alerts on top of other screens."
+
+=== superfreeze.tool.android  [train]  offline system-access draft
+name: SuperFreezZ
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  usage_stats                yes PACKAGE_USAGE_STATS
+source: 14246 bytes, sections Readme, Project, Uses, Signals
+labels: warning false
+must: usage|stat
+note usage_stats: package_usage_stats|freez
+security:
+  It reads your app usage stats to decide which apps to freeze.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "usage_stats","yes","PACKAGE_USAGE_STATS to check which apps have not been used recently and can be frozen."
+
+=== com.wirelessalien.android.moviedb.full  [train]  google tracker draft
+name: ShowCase Plus
+scan:
+  google_services            yes Google Play services: Fido (GMS), Google Play services: Google Mobile Services
+  tracking                   yes OpenCensus
+source: 27852 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning true
+must: fido|authent
+note google_services: fido|authent
+note tracking: opencensus
+security:
+  OpenCensus can send usage data off the phone.
+  
+  Uses Google Play services for FIDO authentication.
+facts:
+  "google_services","yes","Uses Google Play services for FIDO authentication."
+  "tracking","yes","OpenCensus can send usage data off the phone."
+
+=== ie.defo.ech_apps  [train]  location tracker draft
+name: ECH Apps
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  google_services            no  
+  tracking                   yes ACRA
+source: 25466 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: location + crash
+note coarse_location: nearby|swap
+note tracking: acra
+security:
+  ACRA can send crash reports off the phone.
+  
+  Reads your location to find nearby devices for swapping apps.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the nearby swap screen, which finds devices around you."
+  "google_services","no",""
+  "tracking","yes","ACRA can send crash reports off the phone."
+
+=== org.emunix.unipatcher  [train]  offline tracker draft
+name: UniPatcher
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  tracking                   yes ACRA
+source: 4115 bytes, sections Readme, Project, Uses, Signals
+labels: warning true
+must: crash
+note tracking: acra|crash
+security:
+  ACRA crash reports can send data off the phone.
+  
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "tracking","yes","ACRA crash reports"
+
+=== com.tunefriend.app  [train]  google tracker draft
+name: TuneFriend
+scan:
+  google_services            yes Google Play services: Android for Cars
+  tracking                   yes Tune
+source: 21454 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: tune|analytics|tracking + google|play|android|auto|car
+note google_services: android|auto|car
+note tracking: tune|analytics
+security:
+  Tune analytics can send data off the phone.
+  
+  Uses Google Play services for Android Auto.
+facts:
+  "google_services","yes","Uses Google Play services for Android Auto."
+  "tracking","yes","Tune analytics can send data off the phone."
+
+=== dev.medzik.librepass.android  [dev]  camera-mic draft
+name: LibrePass
+scan:
+  camera                     yes CAMERA
+  google_services            no  
+source: 12289 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: camera|qr|scanner
+must_not: cloud, sync, encrypt, vault, librepass
+note camera: qr|scanner
+security:
+  It uses the camera to scan QR codes.
+facts:
+  "camera","yes","CAMERA for the QR code scanner, which reads codes to fill in login details."
+  "google_services","no",""
+
+=== com.dt.opnsense_manager  [test]  ads google draft
+name: OPNsense Manager
+scan:
+  ads                        yes Google AdMob
+  google_services            yes Google Play services: Google Mobile Services
+source: 11008 bytes, sections Readme, Project, Uses, Account, Signals
+labels: warning true
+must: admob|ad + play|service|admob|ad
+must_not: firewall, opnsense, credential, biometric, demo, tailscale
+note ads: admob|banner|ad
+note google_services: admob|ad
+security:
+  Shows ads through Google AdMob, which can send data off the phone.
+  
+  Uses Google Play services for ads.
+facts:
+  "ads","yes","Google AdMob shows banner ads on informational screens."
+  "google_services","yes","Google Play services supports AdMob ads."
+
+=== ly.com.tahaben.farhan  [test]  offline packages system-access tracker draft
+name: Farhan
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  query_all_packages         yes QUERY_ALL_PACKAGES
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+  tracking                   yes ACRA
+  usage_stats                yes PACKAGE_USAGE_STATS
+source: 26691 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: crash + usage + draw|overlay + install|app|filter|block|scroll
+note query_all_packages: filter|notification|block|scroll
+note system_alert_window: draw|overlay|delay|launch|grayscale
+note tracking: acra|crash
+note usage_stats: usage|overview|time|limit
+security:
+  ACRA crash reporting can send data off the phone.
+  
+  Reads your app usage for the usage overview and time limits. Draws over other apps for the delayed launch overlay and grayscale filter. Can see all installed apps to filter notifications and block infinite scrolling.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES to see all installed apps for filtering notifications and blocking infinite scrolling."
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW to draw over other apps for the delayed launch overlay and grayscale filter."
+  "tracking","yes","ACRA crash reporting can send data off the phone."
+  "usage_stats","yes","PACKAGE_USAGE_STATS to read your app usage for the usage overview and time limits."
+
+=== tr.com.basarsubasi.simplefitnessapp  [test]  google offline system-access tracker draft
+name: Simple
+scan:
+  google_services            yes Google Play services: Google Cloud Messaging, Google Play services: Google Mobile Services
+  offline_capable            yes No INTERNET
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+  tracking                   yes Play Install Referrer Library
+source: 12217 bytes, sections Readme, Project, Uses, Signals
+labels: warning true
+must: notification|remind|workout + install|referrer
+must_not: fitness, track, schedule, exercise, weight, progress
+note google_services: notification|remind|workout
+note system_alert_window: notification|remind|workout|pop-up|alert
+note tracking: install|referrer
+security:
+  The Play Install Referrer Library can send data off the phone.
+  
+  Uses Google Play services for workout reminder notifications, and shows them as pop-up alerts.
+facts:
+  "google_services","yes","Uses Google Play services and Firebase Cloud Messaging for workout reminder notifications."
+  "offline_capable","yes",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW shows workout reminder notifications as pop-up alerts."
+  "tracking","yes","Play Install Referrer Library sits next to the data on the phone."
+
+=== com.flux  [train]  camera-mic offline draft
+name: Flux
+scan:
+  google_services            no  
+  microphone                 yes RECORD_AUDIO
+  offline_capable            yes No INTERNET
+source: 13270 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: voice|audio|note|record
+note microphone: audio|note|record
+security:
+  Reads your voice to capture audio notes, which stay on your phone.
+facts:
+  "google_services","no",""
+  "microphone","yes","RECORD_AUDIO for recording voice notes, which are stored in a cache file on the phone."
+  "offline_capable","yes","The app has no internet permission, so data stays on your phone."
+
+=== me.proton.wallet.android  [train]  camera-mic google tracker draft
+name: Proton Wallet
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Fido (GMS), Google Play services: Google Mobile Services, Google Play services: Play Services Places Placereport
+  tracking                   yes Sentry SDK for Java
+source: 18803 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning true
+must: camera + google|play|fido|place + sentry|crash
+must_not: encrypt, seed, bip39, sovereign, censorship, hardware
+note camera: camera|buy|bitcoin|third|party
+note google_services: fido|place
+note tracking: sentry
+security:
+  Sentry crash reporting can send data off the phone.
+  
+  The camera is requested for buying Bitcoin through third-party services. The app uses Google Play services for Fido and places. It sends data to wallet-api.proton.me.
+facts:
+  "camera","yes","CAMERA for buying Bitcoin through third-party services."
+  "google_services","yes","The app uses Google Play services for Fido and places."
+  "tracking","yes","Sentry SDK for Java reports crashes and can send data off the phone."
+
+=== com.hoppe.cliprelay  [train]  camera-mic google draft
+name: ClipRelay
+summary: Clipboard sync across your devices via Nostr
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Google Mobile Services
+source: 12359 bytes, sections Readme, Project, Outbound, Uses, Account
+labels: warning false
+must: qr|bunker|login + firebase|push|notification
+note camera: qr|bunker|login
+note google_services: firebase|push|notification
+security:
+  Scans QR codes to connect to a Nostr bunker for login. Uses Google Play services for Firebase Cloud Messaging.
+facts:
+  "camera","yes","CAMERA scans QR codes on the login screen to connect to a Nostr bunker."
+  "google_services","yes","Uses Firebase Cloud Messaging for push notifications."
+
+=== app.tubestr.mobile  [train]  camera-mic google draft
+name: Tubestr
+scan:
+  camera                     yes CAMERA
+  google_services            yes Google Play services: Android Vision, Google Play services: Google Mobile Services
+  microphone                 yes RECORD_AUDIO
+source: 25143 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: camera|video|record + microphone|audio|record + face|detect
+note camera: video|record
+note microphone: audio|record
+security:
+  Uses the camera for video recording and the microphone for audio capture. Google Play services provides Android Vision for face detection.
+facts:
+  "camera","yes","CAMERA for video recording."
+  "google_services","yes","Uses Google Play services for Android Vision face detection."
+  "microphone","yes","RECORD_AUDIO for audio capture during video recording."
+
+=== name.monwf.customiuizer  [train]  location packages draft
+name: Pengeek
+scan:
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  query_all_packages         yes QUERY_ALL_PACKAGES
+source: 14235 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning false
+must: location + installed|app
+note coarse_location: wi-fi
+note fine_location: wi-fi
+note query_all_packages: installed|app
+security:
+  Checks if location services are enabled to show a Wi-Fi list, and gets the list of installed apps for customization features. It asks for no other sensitive access.
+facts:
+  "coarse_location","yes","ACCESS_COARSE_LOCATION checks if location services are enabled for the Wi-Fi list screen."
+  "fine_location","yes","ACCESS_FINE_LOCATION checks if location services are enabled for the Wi-Fi list screen."
+  "google_services","no",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES gets the list of installed apps for customization features."
+
+=== com.apkupdater.ci  [train]  packages tracker draft
+name: APKUpdater
+scan:
+  google_services            no  
+  query_all_packages         yes QUERY_ALL_PACKAGES
+  request_install_packages   yes REQUEST_INSTALL_PACKAGES
+  tracking                   yes GPlayAPI
+source: 21161 bytes, sections Readme, Project, Outbound, Uses, Signals
+labels: warning true
+must: installed|app|list|update + install|app|update + gplayapi
+must_not: apkmirror, aptoide, f-droid, izzyondroid, apkpure, gitlab
+note query_all_packages: installed|app|list|update
+note request_install_packages: install|app|update
+note tracking: gplayapi
+security:
+  GPlayAPI can send data off the phone.
+  
+  Reads your list of installed apps to check for updates, and can install apps directly.
+facts:
+  "google_services","no",""
+  "query_all_packages","yes","QUERY_ALL_PACKAGES reads the installed app list to find updates."
+  "request_install_packages","yes","REQUEST_INSTALL_PACKAGES installs app updates using the package installer."
+  "tracking","yes","GPlayAPI can send data off the phone."
+
+=== com.tuyafeng.orientationlock  [train]  offline system-access draft
+name: Orientation Lock
+scan:
+  google_services            no  
+  offline_capable            yes No INTERNET
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 4123 bytes, sections Project, Uses, Signals
+labels: warning false
+note system_alert_window: overlay|lock|orientation
+security:
+  It asks for no sensitive access.
+facts:
+  "google_services","no",""
+  "offline_capable","yes",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW uses an overlay to lock the screen orientation."
+
+=== net.wigle.wigleandroid  [train]  camera-mic location system-access draft
+name: WiGLE WiFi Wardriving FOSS
+scan:
+  camera                     yes CAMERA
+  coarse_location            yes ACCESS_COARSE_LOCATION
+  fine_location              yes ACCESS_FINE_LOCATION
+  google_services            no  
+  system_alert_window        yes SYSTEM_ALERT_WINDOW
+source: 33753 bytes, sections Readme, Project, Outbound, Uses, Account, Signals
+labels: warning false
+must: location|geotag|map + qr|code|account|wigle + sparkline|filter|overlay|map
+note camera: qr|code|account
+note coarse_location: scan|timer|rate
+note fine_location: scan|timer|rate
+note system_alert_window: sparkline|filter|overlay
+security:
+  Reads your location to geotag observed networks and show them on a map. The camera scans a QR code to set up your WiGLE.net account. Location and network observations are uploaded to api.wigle.net.
+facts:
+  "camera","yes","CAMERA scans a QR code on the activate screen to set up your WiGLE.net account."
+  "coarse_location","yes","ACCESS_COARSE_LOCATION for the Wi-Fi scan timer, which adjusts the scan rate based on where you are."
+  "fine_location","yes","ACCESS_FINE_LOCATION for the Wi-Fi scan timer, which adjusts the scan rate based on where you are."
+  "google_services","no",""
+  "system_alert_window","yes","SYSTEM_ALERT_WINDOW draws the signal strength sparkline and filter tools over the network detail map."
+

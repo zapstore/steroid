@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/zapstore/steroid/internal/llm"
 	"github.com/zapstore/steroid/internal/scan"
+	"github.com/zapstore/steroid/internal/source"
 )
 
 const (
@@ -81,7 +83,9 @@ func About(ctx context.Context, c *llm.Client, in AboutInput) (AboutResult, erro
 	description := strings.TrimSpace(in.Description)
 	// unverified is the first usable reply that failed only Verify. It is
 	// used when no model writes a verified one, so wording never fails the stage.
-	var out, unverified *aboutReply
+	// broken is the first usable reply that failed only AboutRules, used when
+	// there is neither that nor a description to keep.
+	var out, unverified, broken *aboutReply
 	replied := false
 	check := func(content string) error {
 		replied = true
@@ -89,11 +93,14 @@ func About(ctx context.Context, c *llm.Client, in AboutInput) (AboutResult, erro
 		if err := json.Unmarshal([]byte(content), &r); err != nil {
 			return fmt.Errorf("content: %w", err)
 		}
-		r.About = strings.TrimSpace(r.About)
-		if strings.EqualFold(r.About, "no-change") {
-			r.About = ""
-		}
+		r.About = ReplyAbout(r.Verdict, r.About, description)
 		if err := usableAbout(in, r.About); err != nil {
+			return err
+		}
+		if err := AboutRules(in, r.About, r.Keywords, r.Queries); err != nil {
+			if broken == nil {
+				broken = &r
+			}
 			return err
 		}
 		if r.About != "" && in.Verify != nil {
@@ -125,6 +132,10 @@ func About(ctx context.Context, c *llm.Client, in AboutInput) (AboutResult, erro
 		res.Degraded = "no model's paragraph was verified against the developer text"
 	case replied && description != "":
 		return AboutResult{About: description, Kept: true, Degraded: "every model reply was unusable, kept the listing description"}, nil
+	case broken != nil:
+		out, res.Model = broken, ""
+		out.Keywords, out.Queries = CleanTerms(out.Keywords, out.Queries, in.App.Name, DeveloperText(in.App, in.Readme))
+		res.Degraded = "no model's reply followed every about rule"
 	default:
 		return AboutResult{}, err
 	}
@@ -163,14 +174,24 @@ func usableAbout(in AboutInput, about string) error {
 	return thisAPK(about, "")
 }
 
-// CheckVerdict rejects a reply whose verdict and about disagree: keep with a
-// written paragraph, or write with none. An empty verdict is not checked.
+// ReplyAbout is the paragraph a reply writes, or "" when it keeps the
+// description. The verdict decides: keep drops any paragraph written with it,
+// as long as there is a description to keep.
+func ReplyAbout(verdict, about, description string) string {
+	about = strings.TrimSpace(about)
+	if strings.EqualFold(about, "no-change") {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(verdict)), "keep") && strings.TrimSpace(description) != "" {
+		return ""
+	}
+	return about
+}
+
+// CheckVerdict rejects a reply that says write but writes no paragraph.
+// An empty verdict is not checked.
 func CheckVerdict(verdict, about string) error {
-	v := strings.ToLower(strings.TrimSpace(verdict))
-	switch {
-	case strings.HasPrefix(v, "keep") && about != "":
-		return errors.New("verdict keep, but about is written")
-	case strings.HasPrefix(v, "write") && about == "":
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(verdict)), "write") && about == "" {
 		return errors.New("verdict write, but about is empty")
 	}
 	return nil
@@ -219,11 +240,13 @@ type SecurityInput struct {
 }
 
 // SecurityResult is the note and the fact sheet the model returned.
+// Degraded says why the note came from SecurityTemplate.
 type SecurityResult struct {
 	Security string
 	Facts    Facts
 	Reason   map[string]string
 	Model    string
+	Degraded string
 }
 
 type securityReply struct {
@@ -231,50 +254,20 @@ type securityReply struct {
 	Facts    string `json:"facts"`
 }
 
-// Security writes the security note and fills the fact notes.
+// Security writes the security note and fills the fact notes. When models
+// replied but every reply failed the checks and no note is stored, the note
+// comes from SecurityTemplate. A call that got no reply is still an error.
 func Security(ctx context.Context, c *llm.Client, in SecurityInput) (SecurityResult, error) {
 	if in.App.ID == "" && in.App.Name == "" && strings.TrimSpace(in.App.Content) == "" {
 		return SecurityResult{}, fmt.Errorf("listing required")
 	}
-	current := strings.TrimSpace(in.Current)
 	var res SecurityResult
+	var replied atomic.Bool
 	check := func(content string) error {
-		var r securityReply
-		if err := json.Unmarshal([]byte(content), &r); err != nil {
-			return fmt.Errorf("content: %w", err)
-		}
-		text := strings.TrimSpace(r.Security)
-		if text == "" {
-			return errors.New("empty security")
-		}
-		if strings.EqualFold(text, "no-change") && current == "" {
-			return errors.New("security no-change with no stored text")
-		}
-		if err := thisAPK("", text); err != nil {
-			return err
-		}
-		facts, reasons, noChange, err := ParseSheet(r.Facts)
-		if err != nil {
-			return err
-		}
-		if noChange {
-			facts, reasons, _, err = ParseSheet(in.PrevFacts)
-			if err != nil {
-				return err
-			}
-		}
-		kept := text
-		if strings.EqualFold(text, "no-change") {
-			kept = current
-		}
-		if err := Pitch(kept, in.App); err != nil {
-			return err
-		}
-		if err := againstScan(in.Sheet, kept, reasons); err != nil {
-			return err
-		}
-		res = SecurityResult{Security: text, Facts: Lock(facts, in.Sheet), Reason: reasons}
-		return nil
+		replied.Store(true)
+		var err error
+		res, err = CheckSecurity(in, content)
+		return err
 	}
 	reply, err := c.JSON(ctx, llm.Request{
 		Name:      "security",
@@ -285,10 +278,56 @@ func Security(ctx context.Context, c *llm.Client, in SecurityInput) (SecurityRes
 		},
 	}, check)
 	if err != nil {
+		if ctx.Err() == nil && replied.Load() && strings.TrimSpace(in.Current) == "" {
+			return SecurityTemplate(in), nil
+		}
 		return SecurityResult{}, err
 	}
 	res.Model = reply.Model
 	return res, nil
+}
+
+// CheckSecurity parses a security reply and rejects one the enricher would not store.
+func CheckSecurity(in SecurityInput, content string) (SecurityResult, error) {
+	var r securityReply
+	if err := json.Unmarshal([]byte(content), &r); err != nil {
+		return SecurityResult{}, fmt.Errorf("content: %w", err)
+	}
+	text := strings.TrimSpace(r.Security)
+	if text == "" {
+		return SecurityResult{}, errors.New("empty security")
+	}
+	current := strings.TrimSpace(in.Current)
+	if strings.EqualFold(text, "no-change") && current == "" {
+		return SecurityResult{}, errors.New("security no-change with no stored text")
+	}
+	if err := thisAPK("", text); err != nil {
+		return SecurityResult{}, err
+	}
+	facts, reasons, noChange, err := ParseSheet(r.Facts)
+	if err != nil {
+		return SecurityResult{}, err
+	}
+	if noChange {
+		facts, reasons, _, err = ParseSheet(in.PrevFacts)
+		if err != nil {
+			return SecurityResult{}, err
+		}
+	}
+	kept := text
+	if strings.EqualFold(text, "no-change") {
+		kept = current
+	}
+	if err := Pitch(kept, in.App); err != nil {
+		return SecurityResult{}, err
+	}
+	if err := againstScan(in.Sheet, kept, reasons); err != nil {
+		return SecurityResult{}, err
+	}
+	if err := usesShown(in, reasons); err != nil {
+		return SecurityResult{}, err
+	}
+	return SecurityResult{Security: text, Facts: Lock(facts, in.Sheet), Reason: reasons}, nil
 }
 
 // SecurityRecord is the security user message: current note, scan, listing, then source.
@@ -365,6 +404,11 @@ var (
 	googleWords  = regexp.MustCompile(`(?i)\bgoogle\b|firebase|play[- ]services|\bfcm\b|\bgms\b`)
 	trackerWords = regexp.MustCompile(`(?i)analytics|telemetry|crash report|tracking (?:library|libraries|sdk|code)|(?:third-party|usage) trackers?`)
 	adWords      = regexp.MustCompile(`(?i)\bads\b|\bad (?:library|libraries|sdk|network)|advertis`)
+	noShownUse   = regexp.MustCompile(`(?i)\bno (?:shown )?use\b|\bno use is shown\b|\bnot used\b`)
+	noAccess     = regexp.MustCompile(`(?i)\basks for no sensitive access\b`)
+	permissionID = regexp.MustCompile(`\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|android\.permission`)
+	codeTalk     = regexp.MustCompile(`(?i)\b(?:the scan|source code|the code|provided code|code snippets?|quoted code|the manifest)\b`)
+	staysOnPhone = regexp.MustCompile(`(?i)\bstays? (?:on|in) (?:the|your) (?:phone|device)\b`)
 )
 
 // againstScan rejects security text and fact notes that say what the scan
@@ -372,7 +416,13 @@ var (
 // another build, so a claim they back is not enough. google_services must be
 // yes in the scan to mention Google in the note or the fact notes. A tracking
 // row is needed to mention analytics in the note, and an ads row to mention ads.
+// The note opens with a warning exactly when a tracking or ads row is yes or a
+// permission note says it has no shown use, and claims no sensitive access only
+// when no permission row is yes.
 func againstScan(sheet []scan.Row, security string, notes map[string]string) error {
+	if err := warningFits(sheet, security, notes); err != nil {
+		return err
+	}
 	yes := func(fact string) bool {
 		for _, row := range sheet {
 			if row.Basis == "apk" && row.Fact == fact && row.Value == "yes" {
@@ -397,6 +447,97 @@ func againstScan(sheet []scan.Row, security string, notes map[string]string) err
 		if hit := adWords.FindString(security); hit != "" {
 			return fmt.Errorf("mentions %q, but the scan found no ad library", hit)
 		}
+	}
+	return nil
+}
+
+// statedWords are the words a listing or README uses to state an access's
+// purpose. The match is loose on purpose: it only stops a use that nothing
+// in the code, the listing, or the README backs.
+var statedWords = map[string]*regexp.Regexp{
+	"camera":                   regexp.MustCompile(`(?i)camera|\bqr\b|barcode|\bscan|photo|picture|video`),
+	"microphone":               regexp.MustCompile(`(?i)microphone|\bmic\b|voice|audio|record|speech|sound`),
+	"coarse_location":          regexp.MustCompile(`(?i)locat|\bgps\b|near|\bmaps?\b|position|where you`),
+	"fine_location":            regexp.MustCompile(`(?i)locat|\bgps\b|near|\bmaps?\b|position|where you`),
+	"contacts":                 regexp.MustCompile(`(?i)contact|address book|phone ?book`),
+	"read_sms":                 regexp.MustCompile(`(?i)\bsms\b|text messag`),
+	"receive_sms":              regexp.MustCompile(`(?i)\bsms\b|text messag`),
+	"send_sms":                 regexp.MustCompile(`(?i)\bsms\b|text messag`),
+	"call_log":                 regexp.MustCompile(`(?i)call (?:log|history)|recent calls`),
+	"request_install_packages": regexp.MustCompile(`(?i)install|\bapks?\b|update`),
+	"query_all_packages":       regexp.MustCompile(`(?i)installed (?:apps|applications|packages)|app list|list of apps`),
+	"system_alert_window":      regexp.MustCompile(`(?i)overlay|floating|on top of|over other apps|pop-?up|bubble`),
+	"usage_stats":              regexp.MustCompile(`(?i)usage|screen time`),
+}
+
+// usesShown rejects a permission note that gives a use when the source has
+// no code quote for that permission and the listing and README never state
+// one. Coarse and fine location share their quotes. With no source it does nothing.
+func usesShown(in SecurityInput, notes map[string]string) error {
+	if strings.TrimSpace(in.Source) == "" {
+		return nil
+	}
+	quoted := source.QuotedFacts(in.Source)
+	if quoted["coarse_location"] || quoted["fine_location"] {
+		quoted["coarse_location"], quoted["fine_location"] = true, true
+	}
+	stated := strings.Join([]string{in.App.Summary, in.App.Content, source.DigestReadme(in.Source)}, "\n")
+	for _, row := range in.Sheet {
+		words, ok := statedWords[row.Fact]
+		if row.Basis != "apk" || row.Value != "yes" || !ok || quoted[row.Fact] {
+			continue
+		}
+		note := notes[row.Fact]
+		if note == "" || noShownUse.MatchString(note) || words.MatchString(stated) {
+			continue
+		}
+		return fmt.Errorf("%s note gives a use, but no code or listing shows one; say it has no shown use", row.Fact)
+	}
+	return nil
+}
+
+func warningFits(sheet []scan.Row, security string, notes map[string]string) error {
+	if m := codeTalk.FindString(security); m != "" {
+		return fmt.Errorf("mentions %q; say what the app does, not what the code shows", m)
+	}
+	if m := permissionID.FindString(security); m != "" {
+		return fmt.Errorf("names the permission id %q; say what it allows in words", m)
+	}
+	offline := false
+	for _, row := range sheet {
+		if row.Basis == "apk" && row.Fact == "offline_capable" && row.Value == "yes" {
+			offline = true
+		}
+	}
+	if !offline && staysOnPhone.MatchString(security) {
+		return errors.New("says data stays on the phone, but the app can use the internet")
+	}
+	access, unused, risk := false, false, false
+	for _, row := range sheet {
+		if row.Basis != "apk" || row.Value != "yes" {
+			continue
+		}
+		switch {
+		case row.Fact == "tracking" || row.Fact == "ads":
+			risk = true
+		case scan.IsPermission(row.Fact):
+			access = true
+			if noShownUse.MatchString(notes[row.Fact]) {
+				unused, risk = true, true
+			}
+		}
+	}
+	if access && noAccess.MatchString(security) {
+		return errors.New("says no sensitive access, but the scan has an access")
+	}
+	warned := strings.Contains(strings.TrimSpace(security), "\n\n")
+	switch {
+	case risk && !warned && unused:
+		return errors.New("an access has no shown use, but the note opens with no warning")
+	case risk && !warned:
+		return errors.New("the scan has a tracking or ads library, but the note opens with no warning")
+	case !risk && warned:
+		return errors.New("the note opens with a warning, but nothing in the scan or fact notes calls for one")
 	}
 	return nil
 }
@@ -458,8 +599,6 @@ func setFact(f *Facts, fact, value string) {
 		f.Tracking = value
 	case "offline_capable":
 		f.OfflineCapable = value
-	case "e2ee":
-		f.E2EE = value
 	case "open_source":
 		f.OpenSource = value
 	}

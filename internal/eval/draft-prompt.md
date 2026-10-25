@@ -19,6 +19,6 @@ Reply once. One JSON object with all six keys, no other text. This replaces the 
 }
 ```
 
-- `verdict`, `about`, `keywords`, `queries`: the correct reply, following the writer's instruction exactly. Keep a usable Description; a missing feature is not a reason to write. When you write, at most 280 characters, and use only words the developer wrote. Never name the app, in `about` or in `queries`.
+- `verdict`, `about`, `keywords`, `queries`: the correct reply, following the writer's instruction exactly. Keep a usable Description; a missing feature is not a reason to write. When you write, at most 280 characters, and use only words the developer wrote. Never name the app in `about`. In `queries`, name it only when the name is the plain word for this kind of app, such as Minesweeper.
 - `must`: never empty. One or two groups, whether you keep or write. Each group is lowercase word stems for one core idea any correct about states, with synonyms the developer uses: `[["password"]]`, `[["calendar", "event"], ["sync", "reminder"]]`. A stem matches inside a word, so `shak` matches "shaking". Pick ideas a person needs to know what kind of app this is. Every group must match your own `about`, or the Description when you keep.
 - `must_not`: lowercase phrases from the listing that a correct about never contains: a question to the reader, a greeting, a slogan, a mood, a testimonial, or a name of the app. `[]` when the listing has none.

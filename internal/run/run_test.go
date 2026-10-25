@@ -18,7 +18,7 @@ func value(rows []scan.Row, fact string) (scan.Row, bool) {
 }
 
 func TestNoRepositoryIsNotSourceAvailable(t *testing.T) {
-	rows := Rows(nil, nil, false, generate.App{License: "MIT"}, Repo{})
+	rows := Rows(nil, nil, generate.App{License: "MIT"}, Repo{})
 	row, ok := value(rows, "source_available")
 	if !ok || row.Value != "no" {
 		t.Fatalf("%+v", rows)
@@ -26,14 +26,14 @@ func TestNoRepositoryIsNotSourceAvailable(t *testing.T) {
 }
 
 func TestUntriedRepositoryOmitsSourceAvailable(t *testing.T) {
-	rows := Rows(nil, nil, false, generate.App{}, Repo{Listed: true})
+	rows := Rows(nil, nil, generate.App{}, Repo{Listed: true})
 	if _, ok := value(rows, "source_available"); ok {
 		t.Fatalf("%+v", rows)
 	}
 }
 
 func TestFailedRepositoryIsNotSourceAvailable(t *testing.T) {
-	rows := Rows(nil, nil, false, generate.App{}, Repo{Listed: true, Failed: true})
+	rows := Rows(nil, nil, generate.App{}, Repo{Listed: true, Failed: true})
 	if row, _ := value(rows, "source_available"); row.Value != "no" {
 		t.Fatalf("%+v", rows)
 	}
@@ -41,62 +41,52 @@ func TestFailedRepositoryIsNotSourceAvailable(t *testing.T) {
 
 func TestReadRepositoryNotesLicense(t *testing.T) {
 	repo := Repo{Listed: true, Read: true, Facts: source.Facts{Code: true, License: "BUSL-1.1"}}
-	rows := Rows(nil, nil, true, generate.App{License: "BUSL-1.1"}, repo)
+	rows := Rows(nil, nil, generate.App{License: "BUSL-1.1"}, repo)
 	row, _ := value(rows, "source_available")
 	if row.Value != "yes" || row.Reason != "BUSL-1.1, not an open source license." {
 		t.Fatalf("%+v", row)
 	}
 	repo.Facts = source.Facts{Code: true, License: "GPL-3.0", FreeLicense: true}
-	row, _ = value(Rows(nil, nil, true, generate.App{License: "GPL-3.0-or-later"}, repo), "source_available")
+	row, _ = value(Rows(nil, nil, generate.App{License: "GPL-3.0-or-later"}, repo), "source_available")
 	if row.Reason != "GPL-3.0 license." {
 		t.Fatalf("%+v", row)
 	}
-	row, _ = value(Rows(nil, nil, true, generate.App{License: "MIT"}, repo), "source_available")
+	row, _ = value(Rows(nil, nil, generate.App{License: "MIT"}, repo), "source_available")
 	if row.Reason != "GPL-3.0 license. The listing says MIT." {
 		t.Fatalf("%+v", row)
 	}
 }
 
 func TestDocsOnlyRepositoryIsNotSourceAvailable(t *testing.T) {
-	rows := Rows(nil, nil, true, generate.App{}, Repo{Listed: true, Read: true})
+	rows := Rows(nil, nil, generate.App{}, Repo{Listed: true, Read: true})
 	if row, _ := value(rows, "source_available"); row.Value != "no" {
 		t.Fatalf("%+v", rows)
 	}
 }
 
 func TestOfflineComesFromScanOnly(t *testing.T) {
-	gen := &generate.SecurityResult{Facts: generate.Facts{OfflineCapable: "yes", E2EE: "yes"}}
-	rows := Rows(nil, gen, true, generate.App{}, Repo{})
+	gen := &generate.SecurityResult{Facts: generate.Facts{OfflineCapable: "yes"}}
+	rows := Rows(nil, gen, generate.App{}, Repo{})
 	if row, _ := value(rows, "offline_capable"); row.Value != "no" {
 		t.Fatalf("%+v", rows)
 	}
-	if row, _ := value(rows, "e2ee"); row.Value != "yes" {
-		t.Fatalf("%+v", rows)
-	}
 	scanned := []scan.Row{{Fact: "offline_capable", Value: "yes", Basis: "apk", Evidence: "No INTERNET"}}
-	if row, _ := value(Rows(scanned, nil, false, generate.App{}, Repo{}), "offline_capable"); row.Value != "yes" {
+	if row, _ := value(Rows(scanned, nil, generate.App{}, Repo{}), "offline_capable"); row.Value != "yes" {
 		t.Fatal("scan offline dropped")
 	}
 }
 
-func TestE2EENeedsSource(t *testing.T) {
-	gen := &generate.SecurityResult{Facts: generate.Facts{E2EE: "yes"}}
-	if _, ok := value(Rows(nil, gen, false, generate.App{}, Repo{}), "e2ee"); ok {
-		t.Fatal("e2ee kept without source")
-	}
-}
-
 func TestRetiredFactsDropped(t *testing.T) {
-	rows := []scan.Row{{Fact: "decentralized", Value: "yes"}, {Fact: "accountless", Value: "yes"}, {Fact: "open_source", Value: "yes"}}
-	for _, fact := range []string{"decentralized", "accountless", "open_source"} {
-		if _, ok := value(Rows(rows, nil, false, generate.App{}, Repo{}), fact); ok {
+	rows := []scan.Row{{Fact: "decentralized", Value: "yes"}, {Fact: "accountless", Value: "yes"}, {Fact: "open_source", Value: "yes"}, {Fact: "e2ee", Value: "yes"}}
+	for _, fact := range []string{"decentralized", "accountless", "open_source", "e2ee"} {
+		if _, ok := value(Rows(rows, nil, generate.App{}, Repo{}), fact); ok {
 			t.Fatalf("%s kept", fact)
 		}
 	}
 }
 
 func TestAbsentTrackingAndAdsStayUnknown(t *testing.T) {
-	rows := Rows(nil, nil, false, generate.App{}, Repo{})
+	rows := Rows(nil, nil, generate.App{}, Repo{})
 	for _, fact := range []string{"tracking", "ads"} {
 		if _, ok := value(rows, fact); ok {
 			t.Fatalf("%s written without a finding", fact)

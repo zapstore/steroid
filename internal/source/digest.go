@@ -180,7 +180,6 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 		outbound   []hit
 		useQuotes  = map[string]quote{}
 		account    *quote
-		encrypt    *quote
 		parsed     []parsedSrc
 	)
 	parser := newSinkParser()
@@ -234,11 +233,6 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 					account = &q
 				}
 			}
-			if encrypt == nil {
-				if q, ok := findQuote(rel, lines, e2eeLine); ok {
-					encrypt = &q
-				}
-			}
 		}
 		captureUses(rel, lines, uses, useQuotes)
 		return nil
@@ -268,7 +262,7 @@ func read(ctx context.Context, t *Tree, skipManifest bool, uses []Use, project s
 		}
 		return a.line < b.line
 	})
-	return Digest{Text: formatDigest(len(paths), readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account, encrypt)}
+	return Digest{Text: formatDigest(len(paths), readmePath, readme, project, manifest, skipManifest, outbound, hits, useQuotes, account)}
 }
 
 func scanFile(rel string, lines []string, addHit func(topic, fact, rel string, line int, text string, around []hit)) {
@@ -532,7 +526,7 @@ func parseManifest(rel, body string) manifestInfo {
 	return info
 }
 
-func formatDigest(files int, readmePath, readme, project string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account, encrypt *quote) string {
+func formatDigest(files int, readmePath, readme, project string, manifest manifestInfo, skipManifest bool, outbound, hits []hit, uses map[string]quote, account *quote) string {
 	var b strings.Builder
 	if files > 0 {
 		b.WriteString("Files: ")
@@ -621,7 +615,6 @@ func formatDigest(files int, readmePath, readme, project string, manifest manife
 		}
 	}
 	writeNamed(&b, "Account", account)
-	writeNamed(&b, "Encryption", encrypt)
 	if len(hits) > 0 {
 		b.WriteString("\nSignals:\n")
 		start := b.Len()
@@ -680,6 +673,38 @@ func writeQuote(b *strings.Builder, q quote) {
 	}
 }
 
+// QuotedFacts reads back the facts the Uses section of a digest quotes code for.
+func QuotedFacts(digest string) map[string]bool {
+	out := map[string]bool{}
+	_, rest, ok := strings.Cut(digest, "\nUses:\n")
+	if !ok {
+		return out
+	}
+	rest, _, _ = strings.Cut(rest, "\n\n")
+	for line := range strings.SplitSeq(rest, "\n") {
+		fact, path, ok := strings.Cut(line, " ")
+		if ok && path != "" && !strings.Contains(path, " ") && !strings.HasSuffix(fact, ":") {
+			out[fact] = true
+		}
+	}
+	return out
+}
+
+// DigestReadme reads back the README text of a digest, empty when it has none.
+func DigestReadme(digest string) string {
+	_, rest, ok := strings.Cut(digest, "\nReadme ")
+	if !ok {
+		return ""
+	}
+	_, rest, _ = strings.Cut(rest, ":\n")
+	for _, next := range []string{"\n\nProject:\n", "\n\nOutbound:\n", "\n\nUses:\n", "\n\nSignals:\n"} {
+		if i := strings.Index(rest, next); i >= 0 {
+			rest = rest[:i]
+		}
+	}
+	return rest
+}
+
 func pickPaths(readmePath, manifestPath string) []string {
 	var kept []string
 	seen := map[string]struct{}{}
@@ -724,7 +749,7 @@ func codeExt(rel string) bool {
 	switch strings.ToLower(path.Ext(rel)) {
 	case ".kt", ".java", ".dart", ".aidl", ".go", ".rs", ".swift",
 		".c", ".cc", ".cpp", ".h", ".hpp",
-		".js", ".ts", ".tsx", ".py", ".rb":
+		".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".scala":
 		return true
 	default:
 		return false
@@ -756,7 +781,7 @@ var factUses = map[string][]string{
 	"fine_location":   {"fusedlocationprovider", "locationmanager", "geolocator", "cllocationmanager"},
 	"camera": {
 		"imagecapture", "camerax", "cameradevice", "cameramanager", "previewview", "scancontract",
-		"barcodescanner", "barcodescanning", "decoratedbarcodeview", "integrator", "mobilescanner",
+		"barcodescanner", "barcodescanning", "decoratedbarcodeview", "barcodeview", "integrator", "mobilescanner",
 		"qrview", "qr_code_scanner", "visioncamera", "expo-camera", "html5qrcode", "getusermedia",
 	},
 	"microphone":               {"mediarecorder", "audiorecord", "speechrecognizer", "getusermedia"},
@@ -787,7 +812,7 @@ var factActions = map[string][]string{
 }
 
 func captureUses(rel string, lines []string, uses []Use, got map[string]quote) {
-	if isTestPath(rel) {
+	if isTestPath(rel) || !codeExt(rel) {
 		return
 	}
 	for _, use := range uses {
@@ -803,14 +828,14 @@ func captureUses(rel string, lines []string, uses []Use, got map[string]quote) {
 			}
 			action := containsAny(low, factActions[use.Fact]...)
 			spec := containsAny(low, specific...)
-			if !action && !spec && !containsAny(low, hints...) {
+			if !action && !spec && !containsWord(low, hints...) {
 				continue
 			}
 			score := 1
 			if spec {
 				score = 2
 			}
-			if permissionChoice(lines, i) >= 0 {
+			if spec && permissionChoice(lines, i) >= 0 {
 				score = 3
 			}
 			if action {
@@ -948,13 +973,17 @@ func hintTokens(hint string) []string {
 			return
 		}
 		switch s {
-		case "android", "permission", "includes", "with", "from", "that", "this", "true", "false":
+		case "android", "permission", "includes", "with", "from", "that", "this", "true", "false",
+			"access", "fine", "coarse", "location", "background", "query", "packages", "package",
+			"read", "write", "receive", "send", "request", "install", "bind", "service", "system",
+			"alert", "window", "usage", "stats", "audio", "record", "contacts", "google", "play",
+			"services", "internet":
 			return
 		}
 		tokens = append(tokens, s)
 	}
 	for _, r := range hint {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
 			cur.WriteRune(r)
 			continue
 		}
@@ -962,6 +991,30 @@ func hintTokens(hint string) []string {
 	}
 	flush()
 	return tokens
+}
+
+// containsWord reports whether a part appears in text with no letter or digit
+// on either side, so "fine" does not match "defined".
+func containsWord(text string, parts ...string) bool {
+	for _, part := range parts {
+		for from := 0; part != ""; {
+			i := strings.Index(text[from:], part)
+			if i < 0 {
+				break
+			}
+			i += from
+			end := i + len(part)
+			if (i == 0 || !alnum(text[i-1])) && (end == len(text) || !alnum(text[end])) {
+				return true
+			}
+			from = i + 1
+		}
+	}
+	return false
+}
+
+func alnum(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func findQuote(rel string, lines []string, match func(string) bool) (quote, bool) {
@@ -978,10 +1031,6 @@ func accountLine(low string) bool {
 		return false
 	}
 	return containsAny(low, "signin(", "sign_in(", "login(", "authenticate(", ".signin(", ".login(")
-}
-
-func e2eeLine(low string) bool {
-	return containsAny(low, "e2ee", "end-to-end", "end to end", "secretbox", "libsodium", "nacl.box", "sessioncipher", "signalprotocol")
 }
 
 func codeLine(text string) bool {

@@ -3,7 +3,6 @@ package eval
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -12,8 +11,8 @@ import (
 )
 
 const (
-	minAbout = 100
-	maxAbout = 300
+	minAbout = generate.MinAbout
+	maxAbout = generate.MaxAbout
 )
 
 // Checks are the names a Result can fail, in report order.
@@ -67,10 +66,7 @@ func Score(c Case, in generate.AboutInput, reply Reply, callErr error) Result {
 		fail("reply", "%v", callErr)
 		return res
 	}
-	about := strings.TrimSpace(reply.About)
-	if strings.EqualFold(about, "no-change") {
-		about = ""
-	}
+	about := generate.ReplyAbout(reply.Verdict, reply.About, in.Description)
 	res.Verdict, res.Keywords, res.Queries = reply.Verdict, reply.Keywords, reply.Queries
 	if err := errors.Join(generate.CheckVerdict(reply.Verdict, about), generate.CheckAbout(in, about)); err != nil {
 		fail("accepted", "%v", err)
@@ -153,96 +149,20 @@ func contentFails(w Want, text string) map[string]string {
 	return out
 }
 
-// hasName reports the exact app name as a word. A one-word name the
-// developer also writes in lowercase ("Calendar", "Compass") is an ordinary
-// word and is not checked.
 func hasName(l Listing, text string) bool {
-	name := strings.TrimSpace(l.Name)
-	if utf8.RuneCountInString(name) < 3 {
-		return false
-	}
-	word := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
-	return word.MatchString(text) && !ordinaryName(l)
+	return generate.NamesApp(l.Name, developerText(l), text)
 }
 
-// ordinaryName reports a name made only of words the developer also writes
-// in lowercase, such as "Compass" or "Music Player".
-func ordinaryName(l Listing) bool {
-	words := strings.Fields(strings.TrimSpace(l.Name))
-	if len(words) == 0 {
-		return false
-	}
-	text := l.Content + " " + l.Summary
-	for _, w := range words {
-		if w != strings.ToLower(w) && !regexp.MustCompile(`\b`+regexp.QuoteMeta(strings.ToLower(w))).MatchString(text) {
-			return false
-		}
-	}
-	return true
+func ordinaryName(l Listing) bool { return generate.OrdinaryName(l.Name, developerText(l)) }
+
+func developerText(l Listing) string {
+	return generate.DeveloperText(generate.App{Content: l.Content, Summary: l.Summary}, l.Readme)
 }
 
-var (
-	lowerStart  = regexp.MustCompile(`(\S*)[.!?]\s+[a-z]`)
-	spacedPunct = regexp.MustCompile(`\s[,.;:!?]|,\s*,|\(\s*\)`)
-	abbrev      = regexp.MustCompile(`(?i)(?:^|\s)(?:e\.g|i\.e|etc|vs|approx|incl)$`)
-)
+func garbled(text string) string { return generate.Garbled(text) }
 
-// garbled finds the edit damage that reads as broken English: a doubled
-// word, a sentence that starts lowercase, or stray punctuation.
-func garbled(text string) string {
-	words := strings.Fields(text)
-	for i := 1; i < len(words); i++ {
-		a := strings.Trim(strings.ToLower(words[i-1]), `"'(),.;:!?`)
-		b := strings.Trim(strings.ToLower(words[i]), `"'(),.;:!?`)
-		if a != "" && a == b && !strings.ContainsAny(a, "0123456789") {
-			return fmt.Sprintf("doubled word %q", words[i-1]+" "+words[i])
-		}
-	}
-	for _, m := range lowerStart.FindAllStringSubmatchIndex(text, -1) {
-		if !abbrev.MatchString(text[:m[3]]) {
-			return fmt.Sprintf("sentence starts lowercase: %q", text[m[0]:m[1]])
-		}
-	}
-	if m := spacedPunct.FindString(text); m != "" {
-		return fmt.Sprintf("stray punctuation %q", m)
-	}
-	return ""
-}
-
-var termChars = regexp.MustCompile(`^[a-z0-9 -]+$`)
-
-func keywordsFail(kw []string) string {
-	if len(kw) > 8 {
-		return fmt.Sprintf("%d keywords, want at most 8", len(kw))
-	}
-	for _, k := range kw {
-		if !termChars.MatchString(k) || len(strings.Fields(k)) > 3 {
-			return fmt.Sprintf("keyword %q is not one to three lowercase words", k)
-		}
-	}
-	return ""
-}
+func keywordsFail(kw []string) string { return generate.KeywordsFail(kw) }
 
 func queriesFail(qs []string, l Listing) string {
-	if len(qs) < 5 || len(qs) > 10 {
-		return fmt.Sprintf("%d queries, want 5 to 10", len(qs))
-	}
-	// A name of several words is usually a description ("Music Player"),
-	// which people search for. Only a one-word name is treated as a brand.
-	name := strings.ToLower(strings.TrimSpace(l.Name))
-	if ordinaryName(l) || strings.ContainsRune(name, ' ') {
-		name = ""
-	}
-	for _, q := range qs {
-		if q != strings.ToLower(q) {
-			return fmt.Sprintf("query %q is not lowercase", q)
-		}
-		if n := len(strings.Fields(q)); n < 2 || n > 6 {
-			return fmt.Sprintf("query %q has %d words, want 2 to 6", q, n)
-		}
-		if len(name) >= 4 && strings.Contains(q, name) {
-			return fmt.Sprintf("query %q names the app", q)
-		}
-	}
-	return ""
+	return generate.QueriesFail(qs, l.Name, developerText(l))
 }

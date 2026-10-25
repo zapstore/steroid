@@ -24,11 +24,14 @@ type Options struct {
 	Repeats  int
 	Jobs     int
 	DebugDir string
+	// Repair runs the enricher's check inside the call, so a rejected reply
+	// goes back to the model once with the reason, as in production.
+	Repair bool
 }
 
 // Run asks the model once per case and repeat, at most Jobs at a time. The
-// reply is scored as it arrived: the enricher's checks are scored, not used
-// to retry, so a rejected reply counts against the model.
+// reply is scored as it arrived: unless opt.Repair, the enricher's checks are
+// scored, not used to retry, so a rejected reply counts against the model.
 func Run(ctx context.Context, c *llm.Client, cases []Case, opt Options) []Result {
 	repeats, jobs := opt.Repeats, opt.Jobs
 	type job struct {
@@ -59,7 +62,7 @@ func Run(ctx context.Context, c *llm.Client, cases []Case, opt Options) []Result
 					callCtx = debug.With(ctx, sink)
 				}
 			}
-			out[i] = ask(callCtx, c, j.c)
+			out[i] = ask(callCtx, c, j.c, opt.Repair)
 			out[i].Run = j.run
 		})
 	}
@@ -71,7 +74,7 @@ func Run(ctx context.Context, c *llm.Client, cases []Case, opt Options) []Result
 // reply that arrives and does not parse is the model's failure and is not sent again.
 const transportTries = 3
 
-func ask(ctx context.Context, c *llm.Client, cs Case) Result {
+func ask(ctx context.Context, c *llm.Client, cs Case, repair bool) Result {
 	in := cs.Input()
 	var (
 		reply   Reply
@@ -86,12 +89,22 @@ func ask(ctx context.Context, c *llm.Client, cs Case) Result {
 			NoCache:   true,
 			Messages:  Messages(in),
 		}, func(content string) error {
-			replied = true
-			return json.Unmarshal([]byte(content), &reply)
+			replied, reply = true, Reply{}
+			if err := json.Unmarshal([]byte(content), &reply); err != nil || !repair {
+				return err
+			}
+			about := generate.ReplyAbout(reply.Verdict, reply.About, in.Description)
+			if err := generate.AboutRules(in, about, reply.Keywords, reply.Queries); err != nil {
+				return err
+			}
+			return generate.CheckAbout(in, about)
 		})
 		if err == nil || replied || ctx.Err() != nil {
 			break
 		}
+	}
+	if err != nil && repair && replied && ctx.Err() == nil {
+		err = nil
 	}
 	res := Score(cs, in, reply, err)
 	res.Model = got.Model
