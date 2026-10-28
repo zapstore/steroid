@@ -359,24 +359,62 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 }
 
 func gitEnv() []string {
-	return append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
+	// ngit opens the repository with libgit2, which stats the global gitconfig
+	// on the way in. The relay's ProtectHome makes stat of the real
+	// ~/.gitconfig return EACCES, and libgit2 treats that as a broken config
+	// rather than a missing file. HOME and GIT_CONFIG_GLOBAL point at an empty
+	// file this process can stat. A later entry does not override an earlier
+	// one, so the process HOME is removed first.
+	home := gitHome()
+	return withEnv(os.Environ(), map[string]string{
+		"HOME":                home,
+		"GIT_TERMINAL_PROMPT": "0",
 		// nostr is the ngit remote helper, which fetches over https.
-		"GIT_ALLOW_PROTOCOL=https:nostr",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
-		"GIT_CONFIG_COUNT=4",
-		"GIT_CONFIG_KEY_0=protocol.file.allow",
-		"GIT_CONFIG_VALUE_0=never",
-		"GIT_CONFIG_KEY_1=gc.auto",
-		"GIT_CONFIG_VALUE_1=0",
-		"GIT_CONFIG_KEY_2=fetch.recurseSubmodules",
-		"GIT_CONFIG_VALUE_2=false",
-		"GIT_CONFIG_KEY_3=advice.detachedHead",
-		"GIT_CONFIG_VALUE_3=false",
-		"GIT_NO_LAZY_FETCH=1",
-	)
+		"GIT_ALLOW_PROTOCOL":  "https:nostr",
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_CONFIG_GLOBAL":   filepath.Join(home, ".gitconfig"),
+		"GIT_CONFIG_SYSTEM":   "/dev/null",
+		"GIT_CONFIG_COUNT":    "4",
+		"GIT_CONFIG_KEY_0":    "protocol.file.allow",
+		"GIT_CONFIG_VALUE_0":  "never",
+		"GIT_CONFIG_KEY_1":    "gc.auto",
+		"GIT_CONFIG_VALUE_1":  "0",
+		"GIT_CONFIG_KEY_2":    "fetch.recurseSubmodules",
+		"GIT_CONFIG_VALUE_2":  "false",
+		"GIT_CONFIG_KEY_3":    "advice.detachedHead",
+		"GIT_CONFIG_VALUE_3":  "false",
+		"GIT_NO_LAZY_FETCH":   "1",
+	})
+}
+
+// gitHome is a directory with an empty .gitconfig. It lives under the temp
+// directory, which PrivateTmp leaves writable when ProtectHome hides the
+// account's real home.
+func gitHome() string {
+	dir := filepath.Join(os.TempDir(), "steroid-git-home")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return dir
+	}
+	cfg := filepath.Join(dir, ".gitconfig")
+	if _, err := os.Stat(cfg); err != nil {
+		_ = os.WriteFile(cfg, nil, 0o600)
+	}
+	return dir
+}
+
+func withEnv(base []string, set map[string]string) []string {
+	out := make([]string, 0, len(base)+len(set))
+	for _, kv := range base {
+		key, _, _ := strings.Cut(kv, "=")
+		if _, ok := set[key]; ok {
+			continue
+		}
+		out = append(out, kv)
+	}
+	for key, value := range set {
+		out = append(out, key+"="+value)
+	}
+	return out
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) []byte {
