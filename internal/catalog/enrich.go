@@ -33,7 +33,7 @@ import (
 	"github.com/zapstore/steroid/internal/scan"
 	"github.com/zapstore/steroid/internal/site"
 	"github.com/zapstore/steroid/internal/source"
-	"github.com/zapstore/zsp"
+	"github.com/zapstore/zsp/v2"
 )
 
 const (

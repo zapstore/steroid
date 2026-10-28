@@ -20,6 +20,10 @@ make linux-amd64
 
 Needs CGO (`go-sqlite3`). The binary is `dist/steroid-<os>-<arch>`.
 
+At run time it needs `git` on `PATH`, and `git-remote-nostr` from ngit to
+clone a NIP-34 repository. A listing whose repository
+cannot be cloned is enriched without its source.
+
 ## About evals
 
 `evals/about.jsonl` holds labeled listings. `abouteval` sends each one the about call the enricher would send, scores the reply as it arrived (no retry, no fallback model), and prints pass rates.

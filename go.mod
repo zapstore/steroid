@@ -12,7 +12,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/yalue/onnxruntime_go v1.25.0
 	github.com/zapstore/relay v0.0.0
-	github.com/zapstore/zsp v0.0.0-00010101000000-000000000000
+	github.com/zapstore/zsp/v2 v2.0.0
 	golang.org/x/image v0.38.0
 )
 

@@ -9,6 +9,51 @@ import (
 	"testing"
 )
 
+// nip34Naddr is a kind 30617 repository announcement.
+const nip34Naddr = "naddr1qvzqqqrhnypzqg88e9f588nx7wyz4wt0ura23w3yd4hmztqrkr95utwyvgachjepqyd8wumn8ghj7emfwsh8x6rpddjhxur9v9ex2tnyd9uj7qq22d4kzar92dcx7arnhyhdwn"
+
+// TestResolveAsksNgitForNIP34Repository confirms a NIP-34 repository is asked
+// of ngit however it was declared, and that the listing runs inside a
+// repository: git runs the helper with a GIT_DIR, and the helper refuses to
+// start without one.
+func TestResolveAsksNgitForNIP34Repository(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "args")
+	bin := t.TempDir()
+	body := fmt.Sprintf(`#!/bin/sh
+echo "$*" >>%s
+case "$1" in
+  init) exit 0 ;;
+esac
+printf '%%s\n' "1111111111111111111111111111111111111111 HEAD" "2222222222222222222222222222222222222222 refs/tags/v1.0.0"
+exit 0
+`, record)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, declared := range []string{nip34Naddr, "nostr://" + nip34Naddr, "https://nostrhub.io/" + nip34Naddr} {
+		rev, err := Resolve(t.Context(), declared, "1.0.0")
+		if err != nil {
+			t.Fatalf("Resolve(%q) error = %v", declared, err)
+		}
+		if rev.Remote != "nostr://"+nip34Naddr || rev.Ref != "v1.0.0" {
+			t.Errorf("Resolve(%q) = %+v", declared, rev)
+		}
+	}
+	args, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "init --quiet") {
+		t.Errorf("git calls = %q, want a repository for the helper", args)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(args)), "\n") {
+		if strings.Contains(line, "ls-remote") && !strings.HasPrefix(line, "-C ") {
+			t.Errorf("git call = %q, want the listing to run inside a repository", line)
+		}
+	}
+}
+
 func TestParseGitRefsUsesPeeledTag(t *testing.T) {
 	raw := []byte("aaa HEAD\nbbb refs/tags/v1.2.3\nccc refs/tags/v1.2.3^{}\nddd refs/tags/v1.0.0\n")
 	head, tags := parseGitRefs(raw)

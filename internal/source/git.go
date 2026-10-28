@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -16,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/zapstore/steroid/internal/forge"
+	"github.com/zapstore/zsp/v2"
 )
 
 // Revision is a git remote and the commit to check out.
@@ -28,31 +28,36 @@ type Revision struct {
 
 // AtCommit returns rev at commit. It does not ask the remote which commit that is.
 func AtCommit(repo, commit string) (Revision, error) {
-	remote := strings.TrimSpace(repo)
-	if err := allowedRemote(remote); err != nil {
+	remote, err := cloneRemote(repo)
+	if err != nil {
 		return Revision{}, &UnreadableError{err}
 	}
 	sha, ok := parseCommit(commit)
 	if !ok {
 		return Revision{}, fmt.Errorf("commit %q", commit)
 	}
-	return Revision{Remote: remote, Commit: sha}, nil
+	return Revision{Remote: remote.URL, Commit: sha}, nil
 }
 
 // Resolve lists tags with git ls-remote and picks the tag closest to version.
-// The commit is HEAD when no tag is close. A refused remote is asked through
-// the GitLab API; when that fails too, the error is an UnreadableError.
+// The commit is HEAD when no tag is close. A refused forge remote is asked
+// through the GitLab API; when that fails too, the error is an
+// UnreadableError.
 func Resolve(ctx context.Context, repo, version string) (Revision, error) {
-	remote := strings.TrimSpace(repo)
-	if err := allowedRemote(remote); err != nil {
+	remote, err := cloneRemote(repo)
+	if err != nil {
 		return Revision{}, &UnreadableError{err}
 	}
-	out, err := runGit(ctx, "", "ls-remote", "--", remote, "HEAD", "refs/tags/*")
+	out, err := lsRemote(ctx, remote)
 	if err != nil {
 		if !refused(err) || ctx.Err() != nil {
 			return Revision{}, err
 		}
-		rev, apiErr := gitlabResolve(ctx, remote, version)
+		// Only a GitLab project has an API to fall back to.
+		if remote.Nostr {
+			return Revision{}, &UnreadableError{err}
+		}
+		rev, apiErr := gitlabResolve(ctx, remote.URL, version)
 		switch {
 		case apiErr == nil:
 			return rev, nil
@@ -73,16 +78,37 @@ func Resolve(ctx context.Context, repo, version string) (Revision, error) {
 		}
 	}
 	if commit == "" {
-		return Revision{}, fmt.Errorf("git %s: no commit", remote)
+		return Revision{}, fmt.Errorf("git %s: no commit", remote.URL)
 	}
-	return Revision{Remote: remote, Ref: ref, Commit: commit}, nil
+	return Revision{Remote: remote.URL, Ref: ref, Commit: commit}, nil
+}
+
+// lsRemote lists the remote's HEAD and tags. git runs the ngit helper with
+// the repository's GIT_DIR and the helper refuses to start without one, so a
+// NIP-34 remote is listed from inside a throwaway repository; it reads
+// nothing from it.
+func lsRemote(ctx context.Context, remote zsp.GitRemote) ([]byte, error) {
+	dir := ""
+	if remote.Nostr {
+		temporary, err := os.MkdirTemp("", "steroid-lsremote-*")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(temporary)
+		if _, err := runGit(ctx, "", "init", "--quiet", temporary); err != nil {
+			return nil, err
+		}
+		dir = temporary
+	}
+	return runGit(ctx, dir, "ls-remote", "--", remote.URL, "HEAD", "refs/tags/*")
 }
 
 // Checkout clones rev at depth 1 and drops .git.
 // A revision with no ref is fetched as that commit. A refused remote is read
 // from the GitLab archive; when that fails too, the error is an UnreadableError.
 func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
-	if err := allowedRemote(rev.Remote); err != nil {
+	remote, err := cloneRemote(rev.Remote)
+	if err != nil {
 		return nil, &UnreadableError{err}
 	}
 	dir, err := os.MkdirTemp("", "steroid-src-*")
@@ -91,7 +117,7 @@ func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
 	}
 	sha := rev.Commit
 	if err := checkout(ctx, rev, dir); err != nil {
-		if err := archiveFallback(ctx, rev, dir, err); err != nil {
+		if err := archiveFallback(ctx, rev, remote, dir, err); err != nil {
 			os.RemoveAll(dir)
 			return nil, err
 		}
@@ -126,10 +152,14 @@ func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
 
 // archiveFallback reads rev from the GitLab archive into an emptied dir when
 // git refused it. It returns gitErr when git did not refuse, or when the
-// archive did not answer, so the clone is tried again later.
-func archiveFallback(ctx context.Context, rev Revision, dir string, gitErr error) error {
+// archive did not answer, so the clone is tried again later. Only a GitLab
+// project has an archive to read.
+func archiveFallback(ctx context.Context, rev Revision, remote zsp.GitRemote, dir string, gitErr error) error {
 	if !refused(gitErr) || ctx.Err() != nil {
 		return gitErr
+	}
+	if remote.Nostr {
+		return &UnreadableError{gitErr}
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
@@ -331,7 +361,8 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 func gitEnv() []string {
 	return append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ALLOW_PROTOCOL=https",
+		// nostr is the ngit remote helper, which fetches over https.
+		"GIT_ALLOW_PROTOCOL=https:nostr",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
@@ -356,16 +387,17 @@ func gitOutput(ctx context.Context, dir string, args ...string) []byte {
 	return out
 }
 
-func allowedRemote(remote string) error {
-	remote = strings.TrimSpace(remote)
-	if remote == "" || isNostrRepo(remote) {
-		return fmt.Errorf("repository %s: not a git remote", remote)
+// cloneRemote resolves a declared repository to the remote git is asked
+// about. What a repository resolves to is zsp's definition, so the wizard
+// that wrote it and the enricher that reads it agree: an HTTPS forge root, or
+// a nostr:// remote for a NIP-34 repository, which needs the ngit helper
+// installed beside git.
+func cloneRemote(repo string) (zsp.GitRemote, error) {
+	remote, err := zsp.ParseGitRemote(repo)
+	if err != nil {
+		return zsp.GitRemote{}, fmt.Errorf("repository %s: not a git remote", strings.TrimSpace(repo))
 	}
-	u, err := url.Parse(remote)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-		return fmt.Errorf("repository %s: not an https remote", remote)
-	}
-	return nil
+	return remote, nil
 }
 
 func parseCommit(s string) (string, bool) {
@@ -419,9 +451,4 @@ func tagNames(tags map[string]string) []string {
 		out = append(out, name)
 	}
 	return out
-}
-
-func isNostrRepo(repo string) bool {
-	repo = strings.TrimSpace(repo)
-	return strings.HasPrefix(repo, "nostr://") || strings.HasPrefix(repo, "naddr1")
 }
