@@ -43,20 +43,8 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 	if len(listings) == 0 {
 		return fmt.Errorf("no android-arm64-v8a listings match %q", filter)
 	}
-	if force {
-		db, err := artifacts.Open(ctx, artifacts.Path(data))
-		if err != nil {
-			return err
-		}
-		for _, listing := range listings {
-			if err := db.Delete(ctx, listing.AppID); err != nil {
-				db.Close()
-				return err
-			}
-		}
-		if err := db.Close(); err != nil {
-			return err
-		}
+	if err := prepare(ctx, data, listings, force); err != nil {
+		return err
 	}
 	writeBlock(ctx, enrichLine(len(listings), filter, force))
 	return enrichWork(ctx, data, modelDir, listings, pictures, debug, force)
@@ -65,7 +53,24 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 // EnrichIDs enriches the listings whose app id is in ids.
 // An id with no listing is skipped. An empty ids list does nothing.
 // It does not write a snapshot or a bundle.
+// A cache that already matches the listing does nothing.
 func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string) error {
+	return enrichIDs(ctx, data, dbPath, modelDir, ids, false)
+}
+
+// EnrichForce enriches one app id as `steroid --force` does.
+// The stored row is deleted first. Cached replies, trees, and websites are
+// not reused, and a repository that refused is asked again.
+// An id with no listing is skipped. It does not write a snapshot or a bundle.
+func EnrichForce(ctx context.Context, data, dbPath, modelDir, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	return enrichIDs(ctx, data, dbPath, modelDir, []string{id}, true)
+}
+
+func enrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string, force bool) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -92,8 +97,29 @@ func EnrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string)
 	if len(work) == 0 {
 		return nil
 	}
-	writeBlock(ctx, enrichLine(len(work), "", false))
-	return enrichWork(ctx, data, modelDir, work, pictures, false, false)
+	if err := prepare(ctx, data, work, force); err != nil {
+		return err
+	}
+	writeBlock(ctx, enrichLine(len(work), "", force))
+	return enrichWork(ctx, data, modelDir, work, pictures, false, force)
+}
+
+// prepare deletes stored rows when force is set, before this run reads them.
+func prepare(ctx context.Context, data string, listings []Listing, force bool) error {
+	if !force {
+		return nil
+	}
+	db, err := artifacts.Open(ctx, artifacts.Path(data))
+	if err != nil {
+		return err
+	}
+	for _, listing := range listings {
+		if err := db.Delete(ctx, listing.AppID); err != nil {
+			db.Close()
+			return err
+		}
+	}
+	return db.Close()
 }
 
 // EnrichListing enriches one listing that is not in the relay database yet.

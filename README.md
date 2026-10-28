@@ -1,6 +1,6 @@
 # steroid
 
-Steroid is the enricher. It writes the about text, the security text, the icon, and the search vector to `data/artifacts.db`. The catalog relay calls `enrich.Listing` on each admitted release, just before it lists it. A cache hit does nothing. An operator can re-run it with `enrich` on `relay.sock` or `relay bundle <app-id>`.
+Steroid is the enricher. It writes the about text, the security text, the icon, and the search vector to `data/artifacts.db`. The catalog relay calls `enrich.Listing` on each admitted release, just before it lists it. A cache hit does nothing. The Enrich button sends `enrich` on `relay.sock`, which is `--force`. `relay bundle <app-id>` enriches without `--force`.
 
 ```
 steroid -v

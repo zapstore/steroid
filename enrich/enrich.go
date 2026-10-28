@@ -31,6 +31,13 @@ func IDs(ctx context.Context, data, dbPath string, ids []string) error {
 	return catalog.EnrichIDs(ctx, data, dbPath, ModelDir(data), ids)
 }
 
+// Force enriches one app id as `steroid --force` does. The stored row is
+// deleted first, and cached replies, trees, and websites are not reused.
+// An id with no listing is skipped.
+func Force(ctx context.Context, data, dbPath, id string) error {
+	return catalog.EnrichForce(ctx, data, dbPath, ModelDir(data), id)
+}
+
 // Listing enriches one admitted listing before the relay lists it. picture is
 // its author's profile picture. A cache that already matches the listing does nothing.
 func Listing(ctx context.Context, data string, listing catalog.Listing, picture string) error {
