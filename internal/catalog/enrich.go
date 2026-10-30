@@ -321,7 +321,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture st
 			Report: g.report, Read: g.tree != nil, Facts: g.repo.Facts, Unmentioned: unmentioned,
 			Exact: strings.TrimSpace(in.Commit) != "", Strings: g.strings,
 		})
-		if g.tree == nil && g.repo.Listed && !g.repo.Failed {
+		if g.tree == nil && g.repo.Listed && !g.repo.Failed && !g.repo.Read {
 			found = append(found, flagsOf(prev.Flags, flags.SourceMismatch)...)
 		}
 	}
@@ -539,6 +539,14 @@ func (e *enricher) checkout(ctx context.Context, rep *appReport, in run.Input, r
 	}
 	repo.Read = true
 	rep.mark("clone")
+	// No kept file means the repository was read and holds no app code.
+	// Drop the tree so a mismatch flag is not raised against an empty checkout.
+	if tree.Files == 0 {
+		if err := tree.Close(); err != nil {
+			rep.step("tree close: " + err.Error())
+		}
+		return nil
+	}
 	return tree
 }
 
@@ -553,6 +561,12 @@ func (e *enricher) repoFailed(ctx context.Context, rep *appReport, stage, remote
 	}
 	repo.Unreadable = true
 	rep.degrade("clone", oneLine(err.Error()))
+	// A value that names no remote was never asked, and asking costs nothing,
+	// so it is not put under backoff: a stored reason would outlive the build
+	// that could not read the value.
+	if source.NotRemote(err) {
+		return
+	}
 	e.refuse(ctx, rep, remote, err)
 }
 
@@ -590,7 +604,17 @@ func (e *enricher) refusedEarlier(ctx context.Context, remote string) (refusal, 
 		return refusal{}, false
 	}
 	r, ok := e.lastRefusal(ctx, remote)
-	return r, ok && time.Now().Before(r.Until)
+	if !ok || !time.Now().Before(r.Until) || notAsked(r.Reason) {
+		return refusal{}, false
+	}
+	return r, true
+}
+
+// notAsked reports a stored reason from a build that never contacted the
+// remote. The value named no git remote that build could read, so the next
+// build asks: the forms zsp reads have grown since the reason was stored.
+func notAsked(reason string) bool {
+	return strings.Contains(strings.ToLower(reason), "not a git remote")
 }
 
 // refuse doubles the wait after each refusal in a row, from a day to a month.

@@ -266,6 +266,93 @@ exec '%s' "$@"
 	}
 }
 
+func TestCheckoutWithNoAppCode(t *testing.T) {
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	origin := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(real, args...)
+		cmd.Dir = origin
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	git("init", "-b", "main")
+	git("config", "user.email", "t@example.com")
+	git("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(origin, "version.json"), []byte(`{"version":"2.3.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(origin, "card.webp"), []byte("webp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "version.json", "card.webp")
+	git("commit", "-m", "assets")
+	sha := strings.TrimSpace(string(mustGit(t, real, origin, "rev-parse", "HEAD")))
+	bin := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+unset GIT_ALLOW_PROTOCOL
+unset GIT_CONFIG_COUNT
+unset GIT_CONFIG_KEY_0
+unset GIT_CONFIG_VALUE_0
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+n=0
+for a in "$@"; do
+  n=$((n+1))
+  if [ "$a" = "https://git.example/app" ]; then
+    eval "A$n='%s'"
+  else
+    eval "A$n=\$a"
+  fi
+done
+set --
+i=1
+while [ "$i" -le "$n" ]; do
+  eval "set -- \"\$@\" \"\$A$i\""
+  i=$((i+1))
+done
+exec '%s' "$@"
+`, origin, real)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	rev, err := AtCommit("https://git.example/app", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Checkout(t.Context(), rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Close()
+	if tree.Files != 0 || !strings.EqualFold(tree.Commit, sha) {
+		t.Fatalf("%+v", tree)
+	}
+	if _, err := os.Stat(filepath.Join(tree.Dir, ".git")); !os.IsNotExist(err) {
+		t.Fatal(".git was kept")
+	}
+}
+
+func mustGit(t *testing.T, git, dir string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.Command(git, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return out
+}
+
 func TestPruneCheckoutDropsJunk(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, body string) {

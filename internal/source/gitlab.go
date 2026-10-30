@@ -46,10 +46,26 @@ type UnreadableError struct{ Err error }
 func (e *UnreadableError) Error() string { return e.Err.Error() }
 func (e *UnreadableError) Unwrap() error { return e.Err }
 
-// Unreadable reports whether err says the repository refused or does not exist.
+// NotRemoteError is a listing value that names no git remote. Nothing was
+// asked, so the answer does not change with time: it changes when the listing
+// changes, or when the forms zsp reads grow.
+type NotRemoteError struct{ Err error }
+
+func (e *NotRemoteError) Error() string { return e.Err.Error() }
+func (e *NotRemoteError) Unwrap() error { return e.Err }
+
+// Unreadable reports whether err says the repository refused, does not exist,
+// or was never a remote to ask.
 func Unreadable(err error) bool {
 	var u *UnreadableError
-	return errors.As(err, &u)
+	var n *NotRemoteError
+	return errors.As(err, &u) || errors.As(err, &n)
+}
+
+// NotRemote reports whether err says the listing names no git remote.
+func NotRemote(err error) bool {
+	var n *NotRemoteError
+	return errors.As(err, &n)
 }
 
 // refusals are git messages for a remote that answered and said no.
@@ -207,7 +223,7 @@ func gitlabResolve(ctx context.Context, remote, version string) (Revision, error
 
 // gitlabArchive writes the files keepPath accepts from the project archive
 // at rev.Commit into dir. Files over MaxFile and links are skipped, as the
-// git checkout skips them.
+// git checkout skips them. An archive with nothing to keep leaves dir empty.
 func gitlabArchive(ctx context.Context, rev Revision, dir string) error {
 	root, id, _, err := gitlabProject(ctx, rev.Remote)
 	if err != nil {
@@ -259,9 +275,6 @@ func gitlabArchive(ctx context.Context, rev Revision, dir string) error {
 			return err
 		}
 		n++
-	}
-	if n == 0 {
-		return &UnreadableError{errors.New("repository had no source files")}
 	}
 	return nil
 }

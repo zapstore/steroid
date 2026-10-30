@@ -30,7 +30,7 @@ type Revision struct {
 func AtCommit(repo, commit string) (Revision, error) {
 	remote, err := cloneRemote(repo)
 	if err != nil {
-		return Revision{}, &UnreadableError{err}
+		return Revision{}, &NotRemoteError{err}
 	}
 	sha, ok := parseCommit(commit)
 	if !ok {
@@ -46,7 +46,7 @@ func AtCommit(repo, commit string) (Revision, error) {
 func Resolve(ctx context.Context, repo, version string) (Revision, error) {
 	remote, err := cloneRemote(repo)
 	if err != nil {
-		return Revision{}, &UnreadableError{err}
+		return Revision{}, &NotRemoteError{err}
 	}
 	out, err := lsRemote(ctx, remote)
 	if err != nil {
@@ -106,6 +106,7 @@ func lsRemote(ctx context.Context, remote zsp.GitRemote) ([]byte, error) {
 // Checkout clones rev at depth 1 and drops .git.
 // A revision with no ref is fetched as that commit. A refused remote is read
 // from the GitLab archive; when that fails too, the error is an UnreadableError.
+// A repository that answers and has no app code returns a tree with no files.
 func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
 	remote, err := cloneRemote(rev.Remote)
 	if err != nil {
@@ -136,11 +137,8 @@ func Checkout(ctx context.Context, rev Revision) (*Tree, error) {
 		return nil, err
 	}
 	n, size, err := pruneCheckout(dir)
-	if err != nil || n == 0 {
+	if err != nil {
 		os.RemoveAll(dir)
-		if err == nil {
-			err = &UnreadableError{fmt.Errorf("repository had no source files")}
-		}
 		return nil, err
 	}
 	label := rev.Remote
@@ -193,7 +191,8 @@ func transient(err error) bool {
 // checkout fetches one commit without blobs over MaxFile, then writes only
 // the paths keepPath accepts whose blobs arrived. A path whose blob was left
 // on the server is never checked out, so git never fetches it lazily.
-// A network failure is tried once more.
+// No accepted path leaves the worktree empty: the repository was read and
+// has no app code. A network failure is tried once more.
 func checkout(ctx context.Context, rev Revision, dir string) error {
 	var err error
 	for attempt := range 2 {
@@ -217,7 +216,7 @@ func checkout(ctx context.Context, rev Revision, dir string) error {
 		return err
 	}
 	if len(paths) == 0 {
-		return fmt.Errorf("repository had no source files")
+		return nil
 	}
 	if err := sparse(ctx, dir, paths); err != nil {
 		return err

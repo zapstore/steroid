@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/zapstore/steroid/artifacts"
+	"github.com/zapstore/steroid/internal/run"
+	"github.com/zapstore/steroid/internal/source"
 )
 
 func TestWithReport(t *testing.T) {
@@ -65,6 +67,46 @@ func TestRefusalBacksOff(t *testing.T) {
 	e.fresh = true
 	if _, ok := e.refusedEarlier(t.Context(), remote); ok {
 		t.Fatal("--force did not ask again")
+	}
+}
+
+// A repository zsp cannot read as a remote is enriched without its source,
+// but it is not stored as a refusal: the next build may read the same value.
+func TestValueThatNamesNoRemoteIsNotRefused(t *testing.T) {
+	data := t.TempDir()
+	db, err := artifacts.Open(t.Context(), artifacts.Path(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	e := &enricher{db: db}
+	rep := &appReport{}
+	var repo run.Repo
+	const remote = "naddr1qvzqqqrhnypzqfme70vlgtraactlpe4umnuf4ruatyk3nca3h0f8auw0l5d8lxx3qy28wumn8ghj7un9d3shjtnwva5hgtnyv4mqqznnv968xttswf5kxegh48hvg"
+	e.repoFailed(t.Context(), rep, "repository", remote, &source.NotRemoteError{Err: errors.New("repository " + remote + ": not a git remote")}, &repo)
+	if !repo.Failed || !repo.Unreadable || rep.failed() {
+		t.Fatalf("repo %+v, run failed %v", repo, rep.failed())
+	}
+	if r, ok := e.refusedEarlier(t.Context(), remote); ok {
+		t.Fatalf("stored a refusal: %+v", r)
+	}
+}
+
+// A stored "not a git remote" is a build that never asked. The next build
+// asks, because zsp may read the value now.
+func TestStoredParseFailureIsAskedAgain(t *testing.T) {
+	data := t.TempDir()
+	db, err := artifacts.Open(t.Context(), artifacts.Path(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	e := &enricher{db: db}
+	rep := &appReport{}
+	const remote = "naddr1qvzqqqrhnypzqfme70vlgtraactlpe4umnuf4ruatyk3nca3h0f8auw0l5d8lxx3qy28wumn8ghj7un9d3shjtnwva5hgtnyv4mqqznnv968xttswf5kxegh48hvg"
+	e.refuse(t.Context(), rep, remote, errors.New("repository "+remote+": not a git remote"))
+	if r, ok := e.refusedEarlier(t.Context(), remote); ok {
+		t.Fatalf("honored a reason that never asked the remote: %+v", r)
 	}
 }
 

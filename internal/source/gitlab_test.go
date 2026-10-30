@@ -120,6 +120,35 @@ func TestGitlabArchiveKeepsSourceFiles(t *testing.T) {
 	}
 }
 
+func TestGitlabArchiveWithNoSourceFiles(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	body := "webp"
+	_ = tw.WriteHeader(&tar.Header{Name: "proj/card.webp", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.Close()
+	_ = gz.Close()
+	root := gitlabServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case "/api/v4/projects/isla%2Fnegra":
+			_, _ = w.Write([]byte(`{"id":3,"default_branch":"main"}`))
+		case "/api/v4/projects/3/repository/archive.tar.gz":
+			_, _ = w.Write(buf.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	dir := t.TempDir()
+	if err := gitlabArchive(t.Context(), Revision{Remote: root + "/isla/negra", Commit: testSHA}, dir); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("%v %v", entries, err)
+	}
+}
+
 func TestRefusedAndTransient(t *testing.T) {
 	for _, msg := range []string{
 		"fatal: could not read Username for 'https://gitlab.torproject.org': terminal prompts disabled",

@@ -59,8 +59,9 @@ func TestReadRepositoryNotesLicense(t *testing.T) {
 
 func TestDocsOnlyRepositoryIsNotSourceAvailable(t *testing.T) {
 	rows := Rows(nil, nil, generate.App{}, Repo{Listed: true, Read: true})
-	if row, _ := value(rows, "source_available"); row.Value != "no" {
-		t.Fatalf("%+v", rows)
+	row, _ := value(rows, "source_available")
+	if row.Value != "no" || row.Reason != "The listed repository has no app code." {
+		t.Fatalf("%+v", row)
 	}
 }
 
