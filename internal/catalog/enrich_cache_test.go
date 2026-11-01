@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/zapstore/relay/pkg/events"
 	"github.com/zapstore/steroid/artifacts"
+	"github.com/zapstore/zsp/v2"
 )
 
 func TestEnrichCacheHitSkipsNetwork(t *testing.T) {
@@ -113,6 +115,52 @@ func TestListingInputKeepsAssetCommit(t *testing.T) {
 	}
 	if in.Commit != commit || in.APKHash != hash {
 		t.Fatalf("commit %q hash %q", in.Commit, in.APKHash)
+	}
+}
+
+func TestListingInputReadsNIP34ATagWithoutRepository(t *testing.T) {
+	const pubkey = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+	listing := func(extra ...nostr.Tag) Listing {
+		tags := nostr.Tags{{"d", "com.example.app"}, {"name", "Example"}}
+		return Listing{AppID: "com.example.app", App: nostr.Event{Kind: events.KindApp, Tags: append(tags, extra...)}}
+	}
+	cases := []struct {
+		name string
+		tags []nostr.Tag
+		want string // "" means no repository; "nip34" means the a tag's naddr
+	}{
+		{"a tag with relay hint", []nostr.Tag{{"a", "30617:" + pubkey + ":pomegranate", "wss://relay.ngit.dev"}}, "nip34"},
+		{"a tag without relay hint", []nostr.Tag{{"a", "30617:" + pubkey + ":pomegranate"}}, "nip34"},
+		{"repository tag wins", []nostr.Tag{{"repository", "https://github.com/acme/app"}, {"a", "30617:" + pubkey + ":pomegranate"}}, "https://github.com/acme/app"},
+		{"other kind", []nostr.Tag{{"a", "32267:" + pubkey + ":pomegranate"}}, ""},
+		{"bad pubkey", []nostr.Tag{{"a", "30617:nothex:pomegranate"}}, ""},
+		{"no identifier", []nostr.Tag{{"a", "30617:" + pubkey + ":"}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in, _, err := ListingInput(listing(c.tags...), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.want != "nip34" {
+				if in.Repository != c.want {
+					t.Fatalf("repository %q, want %q", in.Repository, c.want)
+				}
+				return
+			}
+			remote, err := zsp.ParseGitRemote(in.Repository)
+			if err != nil || !remote.Nostr || remote.Repository != in.Repository {
+				t.Fatalf("repository %q does not resolve to a NIP-34 remote: %+v %v", in.Repository, remote, err)
+			}
+			_, pointer, err := nip19.Decode(in.Repository)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ep, ok := pointer.(nostr.EntityPointer)
+			if !ok || ep.Kind != 30617 || ep.PublicKey != pubkey || ep.Identifier != "pomegranate" {
+				t.Fatalf("naddr decodes to %+v", pointer)
+			}
+		})
 	}
 }
 

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/zapstore/relay/pkg/catalog"
 	"github.com/zapstore/relay/pkg/events"
@@ -312,7 +314,7 @@ func ListingInput(listing Listing, cacheDir string) (run.Input, events.App, erro
 		Content:    app.Content,
 		Tags:       app.Tags,
 		Website:    app.URL,
-		Repository: app.Repository,
+		Repository: repositoryOf(app, listing.App.Tags),
 		License:    app.License,
 		IconURL:    app.Icon,
 		Pubkey:     listing.App.PubKey,
@@ -324,6 +326,43 @@ func ListingInput(listing Listing, cacheDir string) (run.Input, events.App, erro
 	}
 	in.URL, in.APKHash, in.Commit = apkOf(listing)
 	return in, app, nil
+}
+
+// kindRepository is a NIP-34 repository announcement.
+const kindRepository = 30617
+
+// repositoryOf is the repository the enricher reads for a listing. The
+// repository tag wins. Without one, a NIP-34 a tag (30617:<pubkey>:<id>, with
+// an optional relay hint) names the repository, as zsp writes it beside the
+// repository tag. It is returned as an naddr, which zsp.ParseGitRemote reads.
+// An a tag of another kind, or a malformed one, is not a repository.
+func repositoryOf(app events.App, tags nostr.Tags) string {
+	if strings.TrimSpace(app.Repository) != "" {
+		return app.Repository
+	}
+	for _, tag := range tags {
+		if len(tag) < 2 || tag[0] != "a" {
+			continue
+		}
+		kind, rest, ok := strings.Cut(tag[1], ":")
+		if !ok || kind != strconv.Itoa(kindRepository) {
+			continue
+		}
+		pubkey, identifier, ok := strings.Cut(rest, ":")
+		if !ok || identifier == "" || !nostr.IsValid32ByteHex(pubkey) {
+			continue
+		}
+		var relays []string
+		if len(tag) >= 3 && strings.TrimSpace(tag[2]) != "" {
+			relays = []string{strings.TrimSpace(tag[2])}
+		}
+		naddr, err := nip19.EncodeEntity(pubkey, kindRepository, identifier, relays)
+		if err != nil {
+			continue
+		}
+		return naddr
+	}
+	return ""
 }
 
 func apkOf(listing Listing) (url, hash, commit string) {
