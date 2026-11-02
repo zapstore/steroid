@@ -37,7 +37,7 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 	if filter == "" {
 		return fmt.Errorf("filter is empty")
 	}
-	listings, pictures, err := catalog.Apps(ctx, dbPath, filter)
+	listings, pictures, signers, err := catalog.Apps(ctx, dbPath, filter)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func EnrichMatching(ctx context.Context, data, dbPath, modelDir, filter string, 
 		return err
 	}
 	writeBlock(ctx, enrichLine(len(listings), filter, force))
-	return enrichWork(ctx, data, modelDir, listings, pictures, debug, force)
+	return enrichWork(ctx, data, modelDir, listings, pictures, signers, debug, force)
 }
 
 // EnrichIDs enriches the listings whose app id is in ids.
@@ -86,7 +86,7 @@ func enrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string,
 	if len(want) == 0 {
 		return nil
 	}
-	listings, pictures, err := catalog.Apps(ctx, dbPath, "")
+	listings, pictures, signers, err := catalog.Apps(ctx, dbPath, "")
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func enrichIDs(ctx context.Context, data, dbPath, modelDir string, ids []string,
 		return err
 	}
 	writeBlock(ctx, enrichLine(len(work), "", force))
-	return enrichWork(ctx, data, modelDir, work, pictures, false, force)
+	return enrichWork(ctx, data, modelDir, work, pictures, signers, false, force)
 }
 
 // prepare deletes stored rows when force is set, before this run reads them.
@@ -125,14 +125,20 @@ func prepare(ctx context.Context, data string, listings []Listing, force bool) e
 }
 
 // EnrichListing enriches one listing that is not in the relay database yet.
-// picture is its author's profile picture. A listing without an f tag
-// android-arm64-v8a is skipped.
-func EnrichListing(ctx context.Context, data, modelDir string, listing Listing, picture string) error {
+// picture is its author's profile picture. signer is the active C1 proof's
+// pubkey; empty means the listing has none, catalog-key listings included,
+// and no trust row is written. A listing without an f tag android-arm64-v8a
+// is skipped.
+func EnrichListing(ctx context.Context, data, modelDir string, listing Listing, picture, signer string) error {
 	work := androidListings([]Listing{listing})
 	if len(work) == 0 {
 		return nil
 	}
-	return enrichWork(ctx, data, modelDir, work, map[string]string{listing.App.PubKey: picture}, false, false)
+	signers := map[string]string{}
+	if signer != "" {
+		signers[listing.AppID] = signer
+	}
+	return enrichWork(ctx, data, modelDir, work, map[string]string{listing.App.PubKey: picture}, signers, false, false)
 }
 
 // androidListings keeps apps whose f tags include android-arm64-v8a.
@@ -162,7 +168,7 @@ func enrichLine(n int, filter string, force bool) string {
 }
 
 // fresh skips the model reply cache, the stored trees, and the website cache.
-func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures map[string]string, debug, fresh bool) error {
+func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pictures, signers map[string]string, debug, fresh bool) error {
 	db, err := artifacts.Open(ctx, artifacts.Path(data))
 	if err != nil {
 		return err
@@ -172,7 +178,7 @@ func enrichWork(ctx context.Context, data, modelDir string, work []Listing, pict
 	e.prune(ctx)
 	var failed atomic.Int32
 	err = processListings(ctx, work, parallelJobs, func(ctx context.Context, _ int, listing Listing) error {
-		bad, err := e.enrich(ctx, listing, pictures[listing.App.PubKey])
+		bad, err := e.enrich(ctx, listing, pictures[listing.App.PubKey], signers[listing.AppID])
 		if bad || err != nil {
 			failed.Add(1)
 		}

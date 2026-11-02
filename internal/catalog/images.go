@@ -22,7 +22,7 @@ import (
 // are left alone, including their cache columns.
 func EnrichImages(ctx context.Context, data, dbPath, filter string, debug bool) error {
 	filter = strings.TrimSpace(filter)
-	listings, pictures, err := catalog.Apps(ctx, dbPath, filter)
+	listings, pictures, _, err := catalog.Apps(ctx, dbPath, filter)
 	if err != nil {
 		return err
 	}

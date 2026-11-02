@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS app (
   facts TEXT NOT NULL DEFAULT '',
   icon_from TEXT NOT NULL DEFAULT '',
   about_hash TEXT NOT NULL DEFAULT '',
-  queries TEXT NOT NULL DEFAULT ''
+  queries TEXT NOT NULL DEFAULT '',
+  trust TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS avatar (
   pubkey TEXT PRIMARY KEY,
@@ -65,6 +66,7 @@ type App struct {
 	Vector   []byte
 	Icon     []byte
 	Queries  string
+	Trust    string
 	Memo     Memo
 	Present  bool
 }
@@ -121,6 +123,9 @@ func prepare(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN queries TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("artifacts queries: %w", err)
 	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN trust TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("artifacts trust: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
 		return fmt.Errorf("artifacts wal: %w", err)
 	}
@@ -156,9 +161,9 @@ func (db *DB) Load(ctx context.Context, id string) (App, error) {
 	}
 	var app App
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT about, security, vector, icon, queries, version, apk, feature, facts, icon_from, about_hash
+		SELECT about, security, vector, icon, queries, trust, version, apk, feature, facts, icon_from, about_hash
 		FROM app WHERE id = ?`, id).Scan(
-		&app.About, &app.Security, &app.Vector, &app.Icon, &app.Queries,
+		&app.About, &app.Security, &app.Vector, &app.Icon, &app.Queries, &app.Trust,
 		&app.Memo.Version, &app.Memo.APK, &app.Memo.Feature, &app.Memo.Facts, &app.Memo.Icon, &app.Memo.About,
 	)
 	if err == sql.ErrNoRows {
@@ -179,6 +184,20 @@ func (db *DB) SetAbout(ctx context.Context, id, body string) error {
 // SetSecurity stores trimmed text plus a trailing newline. An empty body writes nothing.
 func (db *DB) SetSecurity(ctx context.Context, id, body string) error {
 	return db.setText(ctx, id, "security", body)
+}
+
+// SetTrust stores the rendered trust row: a quoted CSV line with the C1
+// signer's top followers by rank, or a leak marker. An empty body clears
+// the row, which is an app with no active proof.
+func (db *DB) SetTrust(ctx context.Context, id, body string) error {
+	if strings.TrimSpace(body) == "" {
+		if err := validID(id); err != nil {
+			return err
+		}
+		_, err := db.sql.ExecContext(ctx, `UPDATE app SET trust = '' WHERE id = ?`, id)
+		return err
+	}
+	return db.setText(ctx, id, "trust", body)
 }
 
 // SetQueries stores likely-query lines. An empty body clears them.

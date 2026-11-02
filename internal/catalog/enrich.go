@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zapstore/relay/pkg/vertex"
 	"github.com/zapstore/steroid/artifacts"
 	"github.com/zapstore/steroid/encode"
 	"github.com/zapstore/steroid/internal/about"
@@ -63,6 +64,9 @@ type enricher struct {
 	fetch    chan struct{}
 	model    chan struct{}
 	avatars  sync.Mutex
+	// vertex is nil when VERTEX_SECRET_KEY is unset. storeTrust then does
+	// nothing and calls Vertex for nothing.
+	vertex *vertex.Client
 	// degraded counts listings that finished with a fallback and no failure.
 	degraded atomic.Int32
 }
@@ -83,6 +87,10 @@ func newEnricher(db *artifacts.DB, data, modelDir string, client *http.Client, d
 		e.llmErr = err
 	} else {
 		e.llm = llm.New(cfg.Providers(), client, llmCache{db: db})
+	}
+	if vcfg := vertexConfig(); vcfg.Enabled() {
+		vc := vertex.NewClient(vcfg)
+		e.vertex = &vc
 	}
 	return e
 }
@@ -131,7 +139,7 @@ func acquire(ctx context.Context, sem chan struct{}) (func(), error) {
 // A failed stage is recorded in the app report. Stages that already succeeded are left in place.
 // The bool is true when any stage failed.
 func Enrich(ctx context.Context, db *artifacts.DB, data, modelDir string, listing Listing, authorPicture string, client *http.Client, debugOn bool) (bool, error) {
-	return newEnricher(db, data, modelDir, client, debugOn, false).enrich(ctx, listing, authorPicture)
+	return newEnricher(db, data, modelDir, client, debugOn, false).enrich(ctx, listing, authorPicture, "")
 }
 
 // gathered is what the first, parallel stage collected.
@@ -147,7 +155,7 @@ type gathered struct {
 	iconFrom string
 }
 
-func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture string) (bad bool, err error) {
+func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, signer string) (bad bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, appDeadline)
 	defer cancel()
 	rep := &appReport{id: listing.AppID, live: e.debug, ctx: ctx}
@@ -204,6 +212,9 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture st
 			rep.fail("avatar", err)
 			return true, nil
 		}
+		if _, err := e.storeTrust(ctx, listing.AppID, signer); err != nil {
+			rep.fail("trust", err)
+		}
 		rep.quiet = true
 		return false, nil
 	}
@@ -217,7 +228,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture st
 	early := plan(m, have)
 	rep.step("plan " + joinOr(planWords(early), "none"))
 
-	g, err := e.gather(ctx, rep, listing, in, stored.Icon, m.Icon, early, authorPicture)
+	g, err := e.gather(ctx, rep, listing, in, stored.Icon, m.Icon, early, authorPicture, signer)
 	defer func() {
 		if g.tree != nil {
 			if err := g.tree.Close(); err != nil {
@@ -389,7 +400,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture st
 // gather runs the stages that only need the listing at once: the
 // repository, the APK and its scan, the listing icon, the website, and the
 // author picture. The error is a database write failure.
-func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, in run.Input, prevIcon []byte, prevFrom string, early work, authorPicture string) (*gathered, error) {
+func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, in run.Input, prevIcon []byte, prevFrom string, early work, authorPicture, signer string) (*gathered, error) {
 	g := &gathered{repo: run.Repo{Listed: strings.TrimSpace(in.Repository) != ""}, iconFrom: prevFrom}
 	g.hasIcon = len(prevIcon) > 0
 	desiredIcon := iconSource(in.IconURL)
@@ -497,6 +508,13 @@ func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, 
 			}
 		})
 	}
+	wg.Go(func() {
+		if wrote, err := e.storeTrust(ctx, listing.AppID, signer); err != nil {
+			rep.fail("trust", err)
+		} else if wrote {
+			rep.mark("trust")
+		}
+	})
 	wg.Wait()
 	return g, fatal
 }
@@ -767,6 +785,10 @@ func aboutInput(app generate.App, in run.Input, readme string, f source.Facts, m
 
 func (e *enricher) storeAvatar(ctx context.Context, pubkey, pictureURL string) (bool, error) {
 	return storeAvatar(ctx, e.db, &e.avatars, pubkey, pictureURL)
+}
+
+func (e *enricher) storeTrust(ctx context.Context, appID, pubkey string) (bool, error) {
+	return storeTrust(ctx, e.db, e.vertex, appID, pubkey)
 }
 
 // keepSourceRow carries source_available from the stored sheet when this

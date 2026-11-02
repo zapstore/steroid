@@ -39,9 +39,10 @@ func Force(ctx context.Context, data, dbPath, id string) error {
 }
 
 // Listing enriches one admitted listing before the relay lists it. picture is
-// its author's profile picture. A cache that already matches the listing does nothing.
-func Listing(ctx context.Context, data string, listing catalog.Listing, picture string) error {
-	return catalog.EnrichListing(ctx, data, ModelDir(data), listing, picture)
+// its author's profile picture. signer is the active C1 proof's pubkey, or
+// empty when the app has none. A cache that already matches the listing does nothing.
+func Listing(ctx context.Context, data string, listing catalog.Listing, picture, signer string) error {
+	return catalog.EnrichListing(ctx, data, ModelDir(data), listing, picture, signer)
 }
 
 // Filter enriches listings whose app id contains filter.
