@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"bytes"
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -117,6 +118,65 @@ func TestAvatar(t *testing.T) {
 	got, ok, err := db.Avatar(ctx, pubkey)
 	if err != nil || !ok || got.Picture != "https://example/a.png" || string(got.WebP) != "webp" {
 		t.Fatalf("ok %v err %v avatar %+v", ok, err, got)
+	}
+}
+
+func TestOpenAddsTrustOnAnOldDatabase(t *testing.T) {
+	dir := t.TempDir()
+	path := Path(dir)
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "InfinityLoop1309.NewPipeEnhanced"
+	_, err = raw.Exec(`
+		CREATE TABLE app (
+		  id TEXT PRIMARY KEY,
+		  about TEXT NOT NULL DEFAULT '',
+		  security TEXT NOT NULL DEFAULT '',
+		  vector BLOB,
+		  icon BLOB,
+		  version INTEGER NOT NULL DEFAULT 0,
+		  apk TEXT NOT NULL DEFAULT '',
+		  feature TEXT NOT NULL DEFAULT '',
+		  facts TEXT NOT NULL DEFAULT '',
+		  icon_from TEXT NOT NULL DEFAULT '',
+		  about_hash TEXT NOT NULL DEFAULT '',
+		  queries TEXT NOT NULL DEFAULT ''
+		)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO app (id, about) VALUES (?, ?)`, id, "about\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := db.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !app.Present || app.About != "about\n" || app.Trust != "" {
+		t.Fatalf("app %+v", app)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ro, err := OpenRead(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	app, err = ro.Load(t.Context(), id)
+	if err != nil || !app.Present || app.Trust != "" {
+		t.Fatalf("read %+v err %v", app, err)
 	}
 }
 
