@@ -4,7 +4,9 @@ package artifacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +30,8 @@ CREATE TABLE IF NOT EXISTS app (
   icon_from TEXT NOT NULL DEFAULT '',
   about_hash TEXT NOT NULL DEFAULT '',
   queries TEXT NOT NULL DEFAULT '',
-  trust TEXT NOT NULL DEFAULT ''
+  trust TEXT NOT NULL DEFAULT '',
+  files_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS avatar (
   pubkey TEXT PRIMARY KEY,
@@ -126,6 +129,9 @@ func prepare(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN trust TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("artifacts trust: %w", err)
 	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN files_hash TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("artifacts files_hash: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
 		return fmt.Errorf("artifacts wal: %w", err)
 	}
@@ -194,8 +200,7 @@ func (db *DB) SetTrust(ctx context.Context, id, body string) error {
 		if err := validID(id); err != nil {
 			return err
 		}
-		_, err := db.sql.ExecContext(ctx, `UPDATE app SET trust = '' WHERE id = ?`, id)
-		return err
+		return db.write(ctx, id, `UPDATE app SET trust = '' WHERE id = ?`, id)
 	}
 	return db.setText(ctx, id, "trust", body)
 }
@@ -332,8 +337,70 @@ func (db *DB) set(ctx context.Context, id, column string, value any) error {
 	query := fmt.Sprintf(`
 		INSERT INTO app (id, %s) VALUES (?, ?)
 		ON CONFLICT(id) DO UPDATE SET %s = excluded.%s`, column, column, column)
-	_, err := db.sql.ExecContext(ctx, query, id, value)
-	return err
+	if column == "queries" {
+		_, err := db.sql.ExecContext(ctx, query, id, value)
+		return err
+	}
+	return db.write(ctx, id, query, id, value)
+}
+
+// write runs one statement on a bundle file column and refreshes files_hash in
+// the same transaction, so a seal never reads new files under an old hash.
+func (db *DB) write(ctx context.Context, id, query string, args ...any) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	var about, security, trust string
+	var vector, icon []byte
+	err = tx.QueryRowContext(ctx, `SELECT about, security, trust, vector, icon FROM app WHERE id = ?`, id).
+		Scan(&about, &security, &trust, &vector, &icon)
+	if err == sql.ErrNoRows {
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	for _, f := range [][]byte{[]byte(about), icon, []byte(security), []byte(trust), vector} {
+		fmt.Fprintf(h, "%d\x00", len(f))
+		h.Write(f)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE app SET files_hash = ? WHERE id = ?`, hex.EncodeToString(h.Sum(nil)), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Files is what a bundle ships for one app: the APK its files were built for
+// and the hash of those files.
+type Files struct {
+	APK  string
+	Hash string
+}
+
+// FilesByApp reads Files for every app with a files_hash. A row written
+// before the column existed has none until one of its files is written again.
+func (db *DB) FilesByApp(ctx context.Context) (map[string]Files, error) {
+	rows, err := db.sql.QueryContext(ctx, `SELECT id, apk, files_hash FROM app WHERE files_hash != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Files{}
+	for rows.Next() {
+		var id string
+		var f Files
+		if err := rows.Scan(&id, &f.APK, &f.Hash); err != nil {
+			return nil, err
+		}
+		out[id] = f
+	}
+	return out, rows.Err()
 }
 
 func validID(id string) error {
