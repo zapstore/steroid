@@ -190,6 +190,58 @@ func openTest(t *testing.T) *DB {
 	return db
 }
 
+func TestSetQualityOnANewAndAnOldDatabase(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+	if err := db.SetQuality(ctx, "com.example.app", "degraded", "clone: repository refused"); err != nil {
+		t.Fatal(err)
+	}
+	var quality, note string
+	if err := db.sql.QueryRowContext(ctx, `SELECT quality, quality_note FROM app WHERE id = ?`, "com.example.app").Scan(&quality, &note); err != nil {
+		t.Fatal(err)
+	}
+	if quality != "degraded" || note != "clone: repository refused" {
+		t.Fatalf("quality %q note %q", quality, note)
+	}
+	if err := db.SetQuality(ctx, "../x", "ok", ""); err == nil {
+		t.Fatal("accepted ..")
+	}
+	if err := db.SetQuality(ctx, "com.example.app", "maybe", ""); err == nil {
+		t.Fatal("accepted maybe")
+	}
+
+	dir := t.TempDir()
+	path := Path(dir)
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE app (id TEXT PRIMARY KEY, about TEXT NOT NULL DEFAULT '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO app (id, about) VALUES (?, ?)`, "com.example.old", "about\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if err := opened.SetQuality(ctx, "com.example.old", "failed", "about: empty"); err != nil {
+		t.Fatal(err)
+	}
+	var about string
+	if err := opened.sql.QueryRowContext(ctx, `SELECT quality, quality_note, about FROM app WHERE id = ?`, "com.example.old").Scan(&quality, &note, &about); err != nil {
+		t.Fatal(err)
+	}
+	if quality != "failed" || note != "about: empty" || about != "about\n" {
+		t.Fatalf("quality %q note %q about %q", quality, note, about)
+	}
+}
+
 func TestCacheExpiresAndPrunes(t *testing.T) {
 	db, err := Open(t.Context(), Path(t.TempDir()))
 	if err != nil {

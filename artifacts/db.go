@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS app (
   about_hash TEXT NOT NULL DEFAULT '',
   queries TEXT NOT NULL DEFAULT '',
   trust TEXT NOT NULL DEFAULT '',
-  files_hash TEXT NOT NULL DEFAULT ''
+  files_hash TEXT NOT NULL DEFAULT '',
+  quality TEXT NOT NULL DEFAULT '',
+  quality_note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS avatar (
   pubkey TEXT PRIMARY KEY,
@@ -131,6 +133,12 @@ func prepare(ctx context.Context, db *sql.DB) error {
 	}
 	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN files_hash TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("artifacts files_hash: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN quality TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("artifacts quality: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN quality_note TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("artifacts quality_note: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
 		return fmt.Errorf("artifacts wal: %w", err)
@@ -236,6 +244,24 @@ func (db *DB) SetIcon(ctx context.Context, id string, icon []byte) error {
 		return nil
 	}
 	return db.set(ctx, id, "icon", icon)
+}
+
+// SetQuality stores how the last enrich finished: ok, degraded, or failed.
+// note is the fallback and failure lines. It is not part of the bundle hash.
+func (db *DB) SetQuality(ctx context.Context, id, quality, note string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	switch quality {
+	case "ok", "degraded", "failed":
+	default:
+		return fmt.Errorf("quality %q", quality)
+	}
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO app (id, quality, quality_note) VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET quality = excluded.quality, quality_note = excluded.quality_note`,
+		id, quality, note)
+	return err
 }
 
 // SetMemo stores the enricher cache columns for one app.

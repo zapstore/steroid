@@ -39,6 +39,20 @@ func TestDegradedStageIsDoneNotOK(t *testing.T) {
 	if strings.Contains(got, "not run") {
 		t.Errorf("degraded stage reported as not run:\n%s", got)
 	}
+	quality, note := r.outcome()
+	if quality != "degraded" || !strings.Contains(note, "clone: repository refused") || !strings.Contains(note, "vector: written from the listing text") {
+		t.Fatalf("outcome %q %q", quality, note)
+	}
+}
+
+func TestFailedOutcomeBeatsAFallback(t *testing.T) {
+	r := &appReport{id: "com.example.app", plan: []string{"about", "vector"}}
+	r.degrade("about", "kept the listing description")
+	r.fail("vector", errors.New("encoder missing"))
+	quality, note := r.outcome()
+	if quality != "failed" || !strings.Contains(note, "vector: encoder missing") || !strings.Contains(note, "about: kept the listing description") {
+		t.Fatalf("outcome %q %q", quality, note)
+	}
 }
 
 func TestRefusalBacksOff(t *testing.T) {

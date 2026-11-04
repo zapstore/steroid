@@ -121,6 +121,45 @@ func (r *appReport) isDegraded() bool {
 	return len(r.degraded) > 0
 }
 
+// outcome is what artifacts.db stores for this run: ok, degraded, or failed,
+// and the lines that say why. A failure wins over a fallback.
+func (r *appReport) outcome() (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	failedStage := map[string]struct{}{}
+	for _, fail := range r.fails {
+		stage, _, _ := strings.Cut(fail, ":")
+		failedStage[stage] = struct{}{}
+	}
+	done := r.doneStages()
+	var missed []string
+	for _, stage := range r.plan {
+		if _, bad := failedStage[stage]; bad {
+			continue
+		}
+		if _, ok := done[stage]; ok {
+			continue
+		}
+		missed = append(missed, stage+": not run")
+	}
+	if len(r.fails) > 0 || len(missed) > 0 {
+		return "failed", clipNote(append(append(append([]string{}, r.fails...), missed...), r.degraded...))
+	}
+	if len(r.degraded) > 0 {
+		return "degraded", clipNote(r.degraded)
+	}
+	return "ok", ""
+}
+
+func clipNote(lines []string) string {
+	const max = 2000
+	note := strings.Join(lines, "\n")
+	if len(note) <= max {
+		return note
+	}
+	return note[:max]
+}
+
 func (r *appReport) failedStage(stage string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

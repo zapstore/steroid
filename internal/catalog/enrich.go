@@ -165,6 +165,16 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 			e.degraded.Add(1)
 		}
 	}()
+	// Runs after a panic is recorded and before the timeout is cancelled.
+	defer func() {
+		if rep.quiet {
+			return
+		}
+		quality, note := rep.outcome()
+		if qerr := e.db.SetQuality(context.WithoutCancel(ctx), listing.AppID, quality, note); qerr != nil {
+			rep.fail("quality", qerr)
+		}
+	}()
 	defer func() {
 		if p := recover(); p != nil {
 			rep.fail("panic", fmt.Errorf("%v", p))
