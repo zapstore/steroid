@@ -173,6 +173,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 		quality, note := rep.outcome()
 		if qerr := e.db.SetQuality(context.WithoutCancel(ctx), listing.AppID, quality, note); qerr != nil {
 			rep.fail("quality", qerr)
+			bad = true
 		}
 	}()
 	defer func() {
@@ -218,6 +219,9 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 		HasFacts:    factsReady(stored.Security),
 	}
 	if cached(m, in, have) {
+		// A cache hit never updates quality: avatar and trust failures here
+		// are incidental to this run, not a verdict on the stored artifacts.
+		rep.quiet = true
 		if _, err := e.storeAvatar(ctx, listing.App.PubKey, authorPicture); err != nil {
 			rep.fail("avatar", err)
 			return true, nil
@@ -225,7 +229,6 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 		if _, err := e.storeTrust(ctx, listing.AppID, signer); err != nil {
 			rep.fail("trust", err)
 		}
-		rep.quiet = true
 		return false, nil
 	}
 	repo := strings.TrimSpace(in.Repository)

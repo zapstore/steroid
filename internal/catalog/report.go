@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 var reportMu sync.Mutex
@@ -157,7 +158,11 @@ func clipNote(lines []string) string {
 	if len(note) <= max {
 		return note
 	}
-	return note[:max]
+	cut := max
+	for cut > 0 && !utf8.RuneStart(note[cut]) {
+		cut--
+	}
+	return note[:cut]
 }
 
 func (r *appReport) failedStage(stage string) bool {

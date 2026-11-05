@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zapstore/steroid/artifacts"
 	"github.com/zapstore/steroid/internal/run"
@@ -52,6 +53,18 @@ func TestFailedOutcomeBeatsAFallback(t *testing.T) {
 	quality, note := r.outcome()
 	if quality != "failed" || !strings.Contains(note, "vector: encoder missing") || !strings.Contains(note, "about: kept the listing description") {
 		t.Fatalf("outcome %q %q", quality, note)
+	}
+}
+
+func TestClipNoteCutsOnARuneBoundary(t *testing.T) {
+	// A multi-byte rune straddling byte 2000 must not be split in half.
+	pad := strings.Repeat("a", 1999)
+	note := clipNote([]string{pad + "é"})
+	if !utf8.ValidString(note) {
+		t.Fatalf("clipped note is not valid utf8: %q", note)
+	}
+	if note != pad {
+		t.Fatalf("clipNote %q, want %q", note, pad)
 	}
 }
 
