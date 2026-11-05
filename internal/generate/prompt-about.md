@@ -20,7 +20,7 @@ Reply once. One JSON object, no other text.
   "verdict": "write: a slogan, it does not say what the app does",
   "about": "Nostr event signer that keeps your keys in one app and signs for web clients.",
   "keywords": ["nostr", "nip-46"],
-  "queries": ["sign nostr events", "nostr key manager", "sign events privately"]
+  "queries": ["sign nostr events", "nostr key manager"]
 }
 ```
 
@@ -66,4 +66,4 @@ At most 8 strings. Each is lowercase, one to three words, and uses only `a-z`, `
 
 ### queries
 
-5 to 10 strings, usually 8. Each is lowercase, two to six words, and says what a person would type to find this kind of app. Include the verb and the adverb, not only nouns: a private chat app includes a line like "chat privately". Do not use the app name, unless the name is the plain word for this kind of app, such as Minesweeper or Calculator. Do not name another product unless the listing names it. Do not put "open source", "offline", or "no google" in a query: search filters on those as facts. Do not name the programming language.
+5 to 10 strings, usually 8. Each is lowercase, two to six words, and says what a person would type to find this kind of app. Do not use the app name, unless the name is the plain word for this kind of app, such as Minesweeper or Calculator. Do not name another product unless the listing names it. Do not put "open source", "offline", or "no google" in a query: search filters on those as facts. Do not name the programming language.
