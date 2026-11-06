@@ -44,6 +44,12 @@ func TestDegradedStageIsDoneNotOK(t *testing.T) {
 	if quality != "degraded" || !strings.Contains(note, "clone: repository refused") || !strings.Contains(note, "vector: written from the listing text") {
 		t.Fatalf("outcome %q %q", quality, note)
 	}
+	// The stored note carries the same plan/ok lines the live job output
+	// shows, not just the fallback lines, so a degraded app's record alone
+	// explains the whole run.
+	if !strings.Contains(note, "plan clone about vector") || !strings.Contains(note, "ok   about") {
+		t.Fatalf("note is missing the plan/ok lines: %q", note)
+	}
 }
 
 func TestFailedOutcomeBeatsAFallback(t *testing.T) {
@@ -53,6 +59,31 @@ func TestFailedOutcomeBeatsAFallback(t *testing.T) {
 	quality, note := r.outcome()
 	if quality != "failed" || !strings.Contains(note, "vector: encoder missing") || !strings.Contains(note, "about: kept the listing description") {
 		t.Fatalf("outcome %q %q", quality, note)
+	}
+	if !strings.Contains(note, "plan about vector") {
+		t.Fatalf("note is missing the plan line: %q", note)
+	}
+}
+
+// clipNote cuts from the end of the joined note, so the degraded and fail
+// lines - what explains the outcome - must come before the plan and ok
+// lines, which are safe to lose first when a note is long enough to be cut.
+func TestNoteOrdersTheReasonBeforePlanAndOK(t *testing.T) {
+	r := &appReport{id: "com.example.app", plan: []string{"clone", "apk", "icon"}}
+	r.mark("clone")
+	r.mark("apk")
+	r.degrade("icon", "fallback icon")
+	r.fail("about", errors.New("empty"))
+	_, note := r.outcome()
+	degraded := strings.Index(note, "degraded ")
+	fail := strings.Index(note, "fail about:")
+	plan := strings.Index(note, "plan ")
+	ok := strings.Index(note, "ok   ")
+	if degraded < 0 || fail < 0 || plan < 0 || ok < 0 {
+		t.Fatalf("note is missing a line: %q", note)
+	}
+	if !(degraded < plan && fail < plan && degraded < ok && fail < ok) {
+		t.Fatalf("plan/ok precede the reason, so a clip would cut the reason first: %q", note)
 	}
 }
 

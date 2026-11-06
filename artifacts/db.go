@@ -247,7 +247,8 @@ func (db *DB) SetIcon(ctx context.Context, id string, icon []byte) error {
 }
 
 // SetQuality stores how the last enrich finished: ok, degraded, or failed.
-// note is the fallback and failure lines. It is not part of the bundle hash.
+// note is the full plan/ok/degraded/fail report for degraded and failed runs
+// (empty for ok). It is not part of the bundle hash.
 func (db *DB) SetQuality(ctx context.Context, id, quality, note string) error {
 	if err := validID(id); err != nil {
 		return err

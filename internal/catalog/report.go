@@ -123,33 +123,118 @@ func (r *appReport) isDegraded() bool {
 }
 
 // outcome is what artifacts.db stores for this run: ok, degraded, or failed,
-// and the lines that say why. A failure wins over a fallback.
+// and the full plan/ok/degraded/fail block, same lines as String but ordered
+// so clipNote drops the plan/ok context before any degraded or fail reason.
+// A failure wins over a fallback.
 func (r *appReport) outcome() (string, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(r.fails) > 0 || r.hasMissedStage() {
+		return "failed", clipNote(r.noteLines())
+	}
+	if len(r.degraded) > 0 {
+		return "degraded", clipNote(r.noteLines())
+	}
+	return "ok", ""
+}
+
+// hasMissedStage reports a planned stage that neither failed nor finished.
+// The caller holds r.mu.
+func (r *appReport) hasMissedStage() bool {
 	failedStage := map[string]struct{}{}
 	for _, fail := range r.fails {
 		stage, _, _ := strings.Cut(fail, ":")
 		failedStage[stage] = struct{}{}
 	}
 	done := r.doneStages()
-	var missed []string
 	for _, stage := range r.plan {
 		if _, bad := failedStage[stage]; bad {
 			continue
 		}
-		if _, ok := done[stage]; ok {
+		if _, ok := done[stage]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// planStatus splits r.plan into the stages that finished ok and the ones
+// that were neither done, degraded, nor failed. The caller holds r.mu.
+func (r *appReport) planStatus() (ok, missed []string) {
+	failed := map[string]struct{}{}
+	for _, fail := range r.fails {
+		stage, _, _ := strings.Cut(fail, ":")
+		failed[stage] = struct{}{}
+	}
+	done := r.doneStages()
+	degraded := map[string]struct{}{}
+	for _, d := range r.degraded {
+		stage, _, _ := strings.Cut(d, ":")
+		degraded[stage] = struct{}{}
+	}
+	for _, stage := range r.plan {
+		if _, bad := failed[stage]; bad {
+			continue
+		}
+		if _, fallback := degraded[stage]; fallback {
+			continue
+		}
+		if _, good := done[stage]; good {
+			ok = append(ok, stage)
 			continue
 		}
 		missed = append(missed, stage+": not run")
 	}
-	if len(r.fails) > 0 || len(missed) > 0 {
-		return "failed", clipNote(append(append(append([]string{}, r.fails...), missed...), r.degraded...))
+	return ok, missed
+}
+
+func planLines(plan, ok []string, noFails bool) []string {
+	lines := []string{"plan " + joinOr(plan, "none")}
+	if len(plan) == 0 {
+		if noFails {
+			lines = append(lines, "ok")
+		}
+	} else {
+		lines = append(lines, "ok   "+joinOr(ok, "-"))
 	}
-	if len(r.degraded) > 0 {
-		return "degraded", clipNote(r.degraded)
+	return lines
+}
+
+// bodyLines is the plan/ok/degraded/fail block for this run, the same lines
+// String prints below the id line, in the order a person reads top to
+// bottom: what was planned, what finished, then what did not.
+// The caller holds r.mu.
+func (r *appReport) bodyLines() []string {
+	ok, missed := r.planStatus()
+	lines := planLines(r.plan, ok, len(r.fails) == 0)
+	for _, d := range r.degraded {
+		lines = append(lines, "degraded "+d)
 	}
-	return "ok", ""
+	for _, f := range r.fails {
+		lines = append(lines, "fail "+f)
+	}
+	for _, m := range missed {
+		lines = append(lines, "fail "+m)
+	}
+	return lines
+}
+
+// noteLines is quality_note's content: the same lines as bodyLines, but with
+// the degraded and fail lines first. clipNote cuts from the end, so a note
+// long enough to be clipped loses the plan/ok context, never the reason.
+func (r *appReport) noteLines() []string {
+	ok, missed := r.planStatus()
+	var lines []string
+	for _, d := range r.degraded {
+		lines = append(lines, "degraded "+d)
+	}
+	for _, f := range r.fails {
+		lines = append(lines, "fail "+f)
+	}
+	for _, m := range missed {
+		lines = append(lines, "fail "+m)
+	}
+	return append(lines, planLines(r.plan, ok, len(r.fails) == 0)...)
 }
 
 func clipNote(lines []string) string {
@@ -208,55 +293,14 @@ func (r *appReport) doneStages() map[string]struct{} {
 func (r *appReport) String() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	failed := map[string]struct{}{}
-	for _, fail := range r.fails {
-		stage, _, _ := strings.Cut(fail, ":")
-		failed[stage] = struct{}{}
-	}
-	done := r.doneStages()
-	degraded := map[string]struct{}{}
-	for _, d := range r.degraded {
-		stage, _, _ := strings.Cut(d, ":")
-		degraded[stage] = struct{}{}
-	}
-	var ok []string
-	var missed []string
-	for _, stage := range r.plan {
-		if _, bad := failed[stage]; bad {
-			continue
-		}
-		if _, fallback := degraded[stage]; fallback {
-			continue
-		}
-		if _, good := done[stage]; good {
-			ok = append(ok, stage)
-			continue
-		}
-		missed = append(missed, stage+": not run")
-	}
-
 	var b strings.Builder
 	version := r.version
 	if version == "" {
 		version = "-"
 	}
 	fmt.Fprintf(&b, "%s %s\n", r.id, version)
-	fmt.Fprintf(&b, "  plan %s\n", joinOr(r.plan, "none"))
-	if len(r.plan) == 0 {
-		if len(r.fails) == 0 {
-			b.WriteString("  ok\n")
-		}
-	} else {
-		fmt.Fprintf(&b, "  ok   %s\n", joinOr(ok, "-"))
-	}
-	for _, d := range r.degraded {
-		fmt.Fprintf(&b, "  degraded %s\n", d)
-	}
-	for _, fail := range r.fails {
-		fmt.Fprintf(&b, "  fail %s\n", fail)
-	}
-	for _, fail := range missed {
-		fmt.Fprintf(&b, "  fail %s\n", fail)
+	for _, line := range r.bodyLines() {
+		fmt.Fprintf(&b, "  %s\n", line)
 	}
 	if r.debugDir != "" {
 		fmt.Fprintf(&b, "  debug %s\n", r.debugDir)
