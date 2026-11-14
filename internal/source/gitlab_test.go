@@ -153,6 +153,7 @@ func TestRefusedAndTransient(t *testing.T) {
 	for _, msg := range []string{
 		"fatal: could not read Username for 'https://gitlab.torproject.org': terminal prompts disabled",
 		"remote: Git access over HTTP is not allowed fatal: unable to access: The requested URL returned error: 403",
+		"git ls-remote -- https://indiesats.com HEAD refs/tags/*: exit status 128: fatal: https://indiesats.com/info/refs not valid: is this a git repository?",
 	} {
 		if !refused(errors.New(msg)) {
 			t.Errorf("not refused: %s", msg)

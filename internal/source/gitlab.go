@@ -74,6 +74,8 @@ var refusals = []string{
 	"access denied", "returned error: 401", "returned error: 403", "returned error: 404",
 	"repository not found", "not found", "does not appear to be a git repository",
 	"is not allowed",
+	// A web server that answers and is not a git host, such as a project website.
+	"is this a git repository",
 }
 
 func refused(err error) bool {
