@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS app (
   trust TEXT NOT NULL DEFAULT '',
   files_hash TEXT NOT NULL DEFAULT '',
   quality TEXT NOT NULL DEFAULT '',
-  quality_note TEXT NOT NULL DEFAULT ''
+  quality_note TEXT NOT NULL DEFAULT '',
+  took_ms INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS avatar (
   pubkey TEXT PRIMARY KEY,
@@ -139,6 +140,9 @@ func prepare(ctx context.Context, db *sql.DB) error {
 	}
 	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN quality_note TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("artifacts quality_note: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE app ADD COLUMN took_ms INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("artifacts took_ms: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
 		return fmt.Errorf("artifacts wal: %w", err)
@@ -248,8 +252,10 @@ func (db *DB) SetIcon(ctx context.Context, id string, icon []byte) error {
 
 // SetQuality stores how the last enrich finished: ok, degraded, or failed.
 // note is the full plan/ok/degraded/fail report for degraded and failed runs
-// (empty for ok). It is not part of the bundle hash.
-func (db *DB) SetQuality(ctx context.Context, id, quality, note string) error {
+// (empty for ok). took is how long the whole run was, rounded to
+// milliseconds, so a slow app can be found without reading the log. None of
+// the three is part of the bundle hash.
+func (db *DB) SetQuality(ctx context.Context, id, quality, note string, took time.Duration) error {
 	if err := validID(id); err != nil {
 		return err
 	}
@@ -258,10 +264,14 @@ func (db *DB) SetQuality(ctx context.Context, id, quality, note string) error {
 	default:
 		return fmt.Errorf("quality %q", quality)
 	}
+	ms := took.Milliseconds()
+	if ms < 0 {
+		ms = 0
+	}
 	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO app (id, quality, quality_note) VALUES (?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET quality = excluded.quality, quality_note = excluded.quality_note`,
-		id, quality, note)
+		INSERT INTO app (id, quality, quality_note, took_ms) VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET quality = excluded.quality, quality_note = excluded.quality_note, took_ms = excluded.took_ms`,
+		id, quality, note, ms)
 	return err
 }
 

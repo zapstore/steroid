@@ -29,6 +29,18 @@ type appReport struct {
 	quiet    bool
 	ctx      context.Context
 	timings  []timing
+	// started is when the run began. A zero value means nobody clocked it,
+	// and took reports no duration rather than one measured from the epoch.
+	started time.Time
+}
+
+// took is how long the whole run has been going. It is zero when the report
+// was built without a start, as the helper reports are.
+func (r *appReport) took() time.Duration {
+	if r.started.IsZero() {
+		return 0
+	}
+	return mono().Sub(r.started)
 }
 
 // timing is how long one stage took.

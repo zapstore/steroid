@@ -193,20 +193,31 @@ func openTest(t *testing.T) *DB {
 func TestSetQualityOnANewAndAnOldDatabase(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
-	if err := db.SetQuality(ctx, "com.example.app", "degraded", "clone: repository refused"); err != nil {
+	if err := db.SetQuality(ctx, "com.example.app", "degraded", "clone: repository refused", 90*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	var quality, note string
-	if err := db.sql.QueryRowContext(ctx, `SELECT quality, quality_note FROM app WHERE id = ?`, "com.example.app").Scan(&quality, &note); err != nil {
+	var took int64
+	if err := db.sql.QueryRowContext(ctx, `SELECT quality, quality_note, took_ms FROM app WHERE id = ?`, "com.example.app").Scan(&quality, &note, &took); err != nil {
 		t.Fatal(err)
 	}
-	if quality != "degraded" || note != "clone: repository refused" {
-		t.Fatalf("quality %q note %q", quality, note)
+	if quality != "degraded" || note != "clone: repository refused" || took != 90_000 {
+		t.Fatalf("quality %q note %q took %d", quality, note, took)
 	}
-	if err := db.SetQuality(ctx, "../x", "ok", ""); err == nil {
+	// A report nobody clocked stores no duration rather than a negative one.
+	if err := db.SetQuality(ctx, "com.example.app", "ok", "", -time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.sql.QueryRowContext(ctx, `SELECT took_ms FROM app WHERE id = ?`, "com.example.app").Scan(&took); err != nil {
+		t.Fatal(err)
+	}
+	if took != 0 {
+		t.Fatalf("took %d", took)
+	}
+	if err := db.SetQuality(ctx, "../x", "ok", "", 0); err == nil {
 		t.Fatal("accepted ..")
 	}
-	if err := db.SetQuality(ctx, "com.example.app", "maybe", ""); err == nil {
+	if err := db.SetQuality(ctx, "com.example.app", "maybe", "", 0); err == nil {
 		t.Fatal("accepted maybe")
 	}
 
@@ -230,15 +241,15 @@ func TestSetQualityOnANewAndAnOldDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer opened.Close()
-	if err := opened.SetQuality(ctx, "com.example.old", "failed", "about: empty"); err != nil {
+	if err := opened.SetQuality(ctx, "com.example.old", "failed", "about: empty", 1500*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	var about string
-	if err := opened.sql.QueryRowContext(ctx, `SELECT quality, quality_note, about FROM app WHERE id = ?`, "com.example.old").Scan(&quality, &note, &about); err != nil {
+	if err := opened.sql.QueryRowContext(ctx, `SELECT quality, quality_note, took_ms, about FROM app WHERE id = ?`, "com.example.old").Scan(&quality, &note, &took, &about); err != nil {
 		t.Fatal(err)
 	}
-	if quality != "failed" || note != "about: empty" || about != "about\n" {
-		t.Fatalf("quality %q note %q about %q", quality, note, about)
+	if quality != "failed" || note != "about: empty" || took != 1500 || about != "about\n" {
+		t.Fatalf("quality %q note %q took %d about %q", quality, note, took, about)
 	}
 }
 
