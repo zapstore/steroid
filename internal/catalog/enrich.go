@@ -153,12 +153,15 @@ type gathered struct {
 	meta     site.Meta
 	hasIcon  bool
 	iconFrom string
+	// iconDone is set when the icon stage settled without failing, whether it
+	// stored an icon or found there is none.
+	iconDone bool
 }
 
 func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, signer string) (bad bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, appDeadline)
 	defer cancel()
-	rep := &appReport{id: listing.AppID, live: e.debug, ctx: ctx}
+	rep := &appReport{id: listing.AppID, live: e.debug, ctx: ctx, started: mono()}
 	defer rep.flush()
 	defer func() {
 		if !bad && err == nil && rep.isDegraded() {
@@ -171,7 +174,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 			return
 		}
 		quality, note := rep.outcome()
-		if qerr := e.db.SetQuality(context.WithoutCancel(ctx), listing.AppID, quality, note); qerr != nil {
+		if qerr := e.db.SetQuality(context.WithoutCancel(ctx), listing.AppID, quality, note, rep.took()); qerr != nil {
 			rep.fail("quality", qerr)
 			bad = true
 		}
@@ -223,8 +226,8 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 		// are incidental to this run, not a verdict on the stored artifacts.
 		rep.quiet = true
 		if _, err := e.storeAvatar(ctx, listing.App.PubKey, authorPicture); err != nil {
-			rep.fail("avatar", err)
-			return true, nil
+			// Not a verdict on the app. Printed because a quiet report is not.
+			writeBlock(ctx, listing.AppID+" avatar: "+oneLine(err.Error()))
 		}
 		if _, err := e.storeTrust(ctx, listing.AppID, signer); err != nil {
 			rep.fail("trust", err)
@@ -234,7 +237,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 	repo := strings.TrimSpace(in.Repository)
 	needReadme := strings.TrimSpace(in.Summary) == "" && strings.TrimSpace(in.Content) == "" && repo != ""
 	have.APK, have.Feature, have.Facts = in.APKHash, m.Feature, m.Facts
-	have.Repo, have.NeedReadme, have.IconURL = repo != "", needReadme, in.IconURL
+	have.Repo, have.NeedReadme = repo != "", needReadme
 	if repo != "" {
 		have.Commit = "pending"
 	}
@@ -393,8 +396,7 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 	if w.About && !rep.failedStage("about") {
 		aboutHash = hashText(about)
 	}
-	desiredIcon := iconSource(in.IconURL)
-	iconOK := (!early.Icon && !w.Icon) || (g.hasIcon && g.iconFrom == desiredIcon && !rep.failedStage("icon"))
+	iconOK := (!early.Icon && !w.Icon) || (g.iconDone && !rep.failedStage("icon"))
 	next := nextMemo(m, in.APKHash, featureHash, factsHash, g.iconFrom, aboutHash, stageDone{
 		Scan:     !early.Scan || (!rep.failedStage("apk") && !rep.failedStage("scan") && hasFacts),
 		About:    !w.About || !rep.failedStage("about"),
@@ -411,12 +413,11 @@ func (e *enricher) enrich(ctx context.Context, listing Listing, authorPicture, s
 }
 
 // gather runs the stages that only need the listing at once: the
-// repository, the APK and its scan, the listing icon, the website, and the
+// repository, the APK with its scan and icon, the website, and the
 // author picture. The error is a database write failure.
 func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, in run.Input, prevIcon []byte, prevFrom string, early work, authorPicture, signer string) (*gathered, error) {
 	g := &gathered{repo: run.Repo{Listed: strings.TrimSpace(in.Repository) != ""}, iconFrom: prevFrom}
 	g.hasIcon = len(prevIcon) > 0
-	desiredIcon := iconSource(in.IconURL)
 	var mu sync.Mutex
 	var fatal error
 	setFatal := func(err error) {
@@ -426,16 +427,18 @@ func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, 
 			fatal = err
 		}
 	}
-	storeIconFrom := func(from string, webp []byte) {
+	// storeIconFrom stores the icon and records where it came from.
+	storeIconFrom := func(from string, webp []byte) bool {
 		if err := storeIcon(ctx, e.db, listing.AppID, prevIcon, webp); err != nil {
 			rep.fail("icon", err)
 			setFatal(err)
-			return
+			return false
 		}
 		mu.Lock()
-		g.hasIcon, g.iconFrom = true, from
+		g.hasIcon, g.iconFrom, g.iconDone = true, from, true
 		mu.Unlock()
 		rep.mark("icon")
+		return true
 	}
 	var wg sync.WaitGroup
 	if early.Clone {
@@ -476,37 +479,31 @@ func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, 
 			} else {
 				g.strings = s
 			}
-			if early.Icon && desiredIcon == "apk" {
+			if early.Icon {
 				webp, err := iconFromAPK(ctx, file.Path)
-				if err != nil {
+				switch {
+				case err != nil:
 					rep.fail("icon", err)
-				} else if len(webp) > 0 {
-					storeIconFrom("apk", webp)
+				case len(webp) > 0:
+					storeIconFrom(iconAPK, webp)
+				default:
+					// The APK has no icon. Ask the network, and settle on
+					// none rather than fail: another run finds the same APK.
+					webp, err := e.listingIcon(ctx, in.IconURL)
+					if len(webp) > 0 {
+						storeIconFrom(iconListing, webp)
+						break
+					}
+					why := "APK has no icon, listing has none"
+					if err != nil {
+						why = "APK has no icon, listing URL failed: " + err.Error()
+					}
+					rep.degrade("icon", why)
+					mu.Lock()
+					g.iconFrom, g.iconDone = iconNone, true
+					mu.Unlock()
 				}
 			}
-		})
-	}
-	if early.Icon && desiredIcon != "apk" {
-		wg.Go(func() {
-			done := rep.timed("icon", "icon "+desiredIcon)
-			defer done()
-			release, err := acquire(ctx, e.fetch)
-			if err != nil {
-				rep.fail("icon", err)
-				return
-			}
-			raw, err := picture.Fetch(ctx, desiredIcon)
-			release()
-			if err != nil {
-				rep.fail("icon", err)
-				return
-			}
-			webp, err := picture.Encode(raw, picture.Icon)
-			if err != nil {
-				rep.fail("icon", err)
-				return
-			}
-			storeIconFrom(desiredIcon, webp)
 		})
 	}
 	if early.About && strings.TrimSpace(in.Website) != "" {
@@ -514,9 +511,10 @@ func (e *enricher) gather(ctx context.Context, rep *appReport, listing Listing, 
 	}
 	if strings.TrimSpace(authorPicture) != "" {
 		wg.Go(func() {
-			if _, err := e.storeAvatar(ctx, listing.App.PubKey, authorPicture); err != nil {
-				rep.fail("avatar", err)
-			} else {
+			if wrote, err := e.storeAvatar(ctx, listing.App.PubKey, authorPicture); err != nil {
+				// The picture is the author's, not an app artifact. It is retried next run.
+				rep.degrade("avatar", err.Error())
+			} else if wrote {
 				rep.mark("avatar")
 			}
 		})
@@ -864,7 +862,6 @@ func cached(m memo, in run.Input, have observed) bool {
 	have.Commit = ""
 	have.Repo = repo
 	have.NeedReadme = needReadme
-	have.IconURL = in.IconURL
 	return !plan(m, have).pending()
 }
 
@@ -935,6 +932,27 @@ func openAPK(ctx context.Context, data, path string, in run.Input) (*apk.File, e
 		return nil, err
 	}
 	return &apk.File{Path: path, Hash: file.Hash}, nil
+}
+
+// listingIcon fetches the icon the listing names. An empty URL is no icon and no error.
+func (e *enricher) listingIcon(ctx context.Context, url string) ([]byte, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, nil
+	}
+	release, err := acquire(ctx, e.fetch)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return iconFromURL(ctx, url)
+}
+
+func iconFromURL(ctx context.Context, url string) ([]byte, error) {
+	raw, err := picture.Fetch(ctx, strings.TrimSpace(url))
+	if err != nil {
+		return nil, err
+	}
+	return picture.Encode(raw, picture.Icon)
 }
 
 func iconFromAPK(ctx context.Context, path string) ([]byte, error) {

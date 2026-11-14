@@ -24,8 +24,8 @@ type Input struct {
 	Repository string   `json:"repository,omitempty"`
 	License    string   `json:"license,omitempty"`
 	Commit     string   `json:"commit,omitempty"`
-	Version    string   `json:"version,omitempty"`
 	IconURL    string   `json:"icon_url,omitempty"`
+	Version    string   `json:"version,omitempty"`
 	APKHash    string   `json:"apk_hash,omitempty"`
 	Pubkey     string   `json:"pubkey,omitempty"`
 	Npub       string   `json:"npub,omitempty"`

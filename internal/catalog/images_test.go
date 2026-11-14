@@ -11,20 +11,19 @@ import (
 	"github.com/zapstore/steroid/artifacts"
 )
 
-func TestImagesKeepsTheIconWhenTheSourceMatches(t *testing.T) {
+func TestImagesKeepsTheIconTakenFromTheAPK(t *testing.T) {
 	data := t.TempDir()
 	db := openImagesDB(t, data)
 	const id = "com.example.app"
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	const iconURL = "https://127.0.0.1/icon.png"
-	listing := imageListing(id, hash, iconURL)
+	listing := imageListing(id, hash)
 	if err := db.SetAbout(t.Context(), id, "kept"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.SetIcon(t.Context(), id, []byte("webp")); err != nil {
 		t.Fatal(err)
 	}
-	memo := artifacts.Memo{Version: enrichVersion, APK: hash, Feature: "feat", Facts: "facts", Icon: iconURL, About: "about"}
+	memo := artifacts.Memo{Version: enrichVersion, APK: hash, Feature: "feat", Facts: "facts", Icon: "apk", About: "about"}
 	if err := db.SetMemo(t.Context(), id, memo); err != nil {
 		t.Fatal(err)
 	}
@@ -48,13 +47,49 @@ func TestImagesKeepsTheIconWhenTheSourceMatches(t *testing.T) {
 	}
 }
 
-func TestImagesTriesTheAPKWhenTheURLFails(t *testing.T) {
+func TestImagesRefetchesWhenTheAPKHasChanged(t *testing.T) {
+	data := t.TempDir()
+	db := openImagesDB(t, data)
+	t.Setenv("BLOSSOM_URL", "https://127.0.0.1/blossom")
+	const id = "com.example.app"
+	const oldHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const newHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	listing := imageListing(id, newHash)
+	if err := db.SetIcon(t.Context(), id, []byte("old-webp")); err != nil {
+		t.Fatal(err)
+	}
+	// Memo.APK is stale: the full enrich pipeline has not scanned newHash yet,
+	// so an icon memo'd as "apk" against oldHash must not be trusted for it.
+	memo := artifacts.Memo{Version: enrichVersion, APK: oldHash, Feature: "feat", Facts: "facts", Icon: "apk", About: "about"}
+	if err := db.SetMemo(t.Context(), id, memo); err != nil {
+		t.Fatal(err)
+	}
+
+	// No real APK server is reachable here, so a refetch attempt fails. That
+	// still proves one was attempted instead of trusting the stale memo.
+	bad, err := imagesOne(t.Context(), db, data, listing, "", &sync.Mutex{}, false)
+	if err != nil || !bad {
+		t.Fatalf("expected a failed refetch attempt, bad=%v err=%v", bad, err)
+	}
+	got, err := db.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Icon) != "old-webp" {
+		t.Fatalf("a failed refetch replaced the icon: %q", got.Icon)
+	}
+	if got.Memo != memo {
+		t.Fatalf("a failed refetch changed the memo: %+v", got.Memo)
+	}
+}
+
+func TestImagesFailsWhenTheAPKCannotBeRead(t *testing.T) {
 	data := t.TempDir()
 	db := openImagesDB(t, data)
 	t.Setenv("BLOSSOM_URL", "https://127.0.0.1/blossom")
 	const id = "com.example.app"
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	listing := imageListing(id, hash, "https://127.0.0.1/icon.png")
+	listing := imageListing(id, hash)
 	if err := db.SetAbout(t.Context(), id, "kept"); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +121,7 @@ func TestImagesEmptyFilterIsEveryListing(t *testing.T) {
 func TestImagesStoresNothingWithoutASource(t *testing.T) {
 	data := t.TempDir()
 	db := openImagesDB(t, data)
-	listing := imageListing("com.example.app", "", "")
+	listing := imageListing("com.example.app", "")
 
 	bad, err := imagesOne(t.Context(), db, data, listing, "", &sync.Mutex{}, false)
 	if err != nil || bad {
@@ -111,11 +146,8 @@ func openImagesDB(t *testing.T, data string) *artifacts.DB {
 	return db
 }
 
-func imageListing(id, hash, iconURL string) Listing {
+func imageListing(id, hash string) Listing {
 	app := nostr.Tags{{"d", id}, {"name", "Example"}, {"summary", "A summary"}}
-	if iconURL != "" {
-		app = append(app, nostr.Tag{"icon", iconURL})
-	}
 	listing := Listing{
 		AppID: id,
 		App: nostr.Event{

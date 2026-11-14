@@ -94,21 +94,83 @@ func TestPlanLostAboutFileRedoes(t *testing.T) {
 	}
 }
 
-func TestPlanListingIconDoesNotDownload(t *testing.T) {
+func TestPlanOldIconWaitsForAScan(t *testing.T) {
 	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "https://cdn.example/old.webp"}
 	o := observed{
-		APK: "apk", Feature: "feat", Facts: "fcm:yes", IconURL: "https://cdn.example/new.webp",
+		APK: "apk", Feature: "feat", Facts: "fcm:yes",
 		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
 	}
+	if got := plan(m, o); got.pending() {
+		t.Fatalf("an old icon alone caused work: %+v", got)
+	}
+	o.APK = "new"
 	got := plan(m, o)
-	if !got.Icon || got.Download || got.Scan || got.About || got.Security {
+	if !got.Icon || !got.Download || !got.Scan {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestPlanMissingIconDownloadsTheAPK(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: "apk"}
+	o := observed{
+		APK: "apk", Feature: "feat", Facts: "fcm:yes",
+		HasAbout: true, HasSecurity: true, HasVector: true, HasFacts: true,
+	}
+	got := plan(m, o)
+	if !got.Icon || !got.Download || got.Scan {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestPlanSettledNoIconIsNotAskedAgain(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: iconNone}
+	o := observed{
+		APK: "apk", Feature: "feat", Facts: "fcm:yes",
+		HasAbout: true, HasSecurity: true, HasVector: true, HasFacts: true,
+	}
+	if got := plan(m, o); got.pending() {
+		t.Fatalf("no icon was asked for again: %+v", got)
+	}
+	o.APK = "new"
+	if got := plan(m, o); !got.Icon || !got.Download {
+		t.Fatalf("a new APK should look again: %+v", got)
+	}
+}
+
+func TestPlanListingIconStaysUntilTheAPKChanges(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "apk", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: iconListing}
+	o := observed{
+		APK: "apk", Feature: "feat", Facts: "fcm:yes",
+		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
+	}
+	if got := plan(m, o); got.pending() {
+		t.Fatalf("%+v", got)
+	}
+	o.APK = "new"
+	if got := plan(m, o); !got.Icon {
+		t.Fatalf("a new APK should try its own icon: %+v", got)
+	}
+}
+
+func TestPlanStaleAPKIconIsRedoneWhenAPKChanges(t *testing.T) {
+	m := memo{Version: enrichVersion, APK: "old", Feature: "feat", Facts: "fcm:yes", About: "about", Icon: iconAPK}
+	o := observed{
+		APK: "old", Feature: "feat", Facts: "fcm:yes",
+		HasAbout: true, HasSecurity: true, HasIcon: true, HasVector: true, HasFacts: true,
+	}
+	if got := plan(m, o); got.pending() {
+		t.Fatalf("an icon from the current APK caused work: %+v", got)
+	}
+	o.APK = "new"
+	got := plan(m, o)
+	if !got.Icon || !got.Download || !got.Scan {
+		t.Fatalf("a new APK should redo even an icon memo'd as apk: %+v", got)
 	}
 }
 
 func TestNextMemoKeepsHashesWhenAStageFails(t *testing.T) {
 	prev := memo{Version: enrichVersion, APK: "old", Feature: "feat", Facts: "facts", Icon: "apk", About: "about"}
-	got := nextMemo(prev, "new", "feat2", "facts2", "https://cdn.example/a.webp", "about2", stageDone{})
+	got := nextMemo(prev, "new", "feat2", "facts2", "apk", "about2", stageDone{})
 	if got != prev {
 		t.Fatalf("failed run stored %+v", got)
 	}

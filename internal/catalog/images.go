@@ -10,15 +10,13 @@ import (
 
 	"github.com/zapstore/relay/pkg/catalog"
 	"github.com/zapstore/steroid/artifacts"
-	"github.com/zapstore/steroid/internal/picture"
 	"github.com/zapstore/steroid/internal/run"
 )
 
 // EnrichImages fetches the icon and the author avatar. An empty filter is
 // every android-arm64-v8a listing. Otherwise the app id must contain filter.
-// The icon comes from the listing URL, then from the APK when that URL is
-// missing or fails and the listing has an APK. The avatar comes from the
-// author's kind 0 picture URL. Clone, scan, about, security, and the vector
+// The icon comes from the APK, so a listing with no APK gets none. The
+// avatar comes from the author's kind 0 picture URL. Clone, scan, about, security, and the vector
 // are left alone, including their cache columns.
 func EnrichImages(ctx context.Context, data, dbPath, filter string, debug bool) error {
 	filter = strings.TrimSpace(filter)
@@ -72,25 +70,24 @@ func imagesOne(ctx context.Context, db *artifacts.DB, data string, listing Listi
 		rep.fail("db", err)
 		return true, err
 	}
-	got, err := fetchIcon(ctx, db, data, in, stored)
-	if err != nil {
+	from, note, err := fetchIcon(ctx, db, data, in, stored)
+	switch {
+	case err != nil:
 		rep.fail("icon", err)
-	} else if got.from != "" {
-		if err := rememberIcon(ctx, db, listing.AppID, stored, got.from); err != nil {
+	case from != "":
+		if err := rememberIcon(ctx, db, listing.AppID, stored, from); err != nil {
 			rep.fail("db", err)
 			return true, err
 		}
-		if got.fetched {
-			if got.fallback != "" {
-				rep.degrade("icon", "listing URL failed, used the APK")
-			} else {
-				rep.mark("icon")
-			}
+		if from == iconNone {
+			rep.degrade("icon", note)
+		} else {
+			rep.mark("icon")
 		}
 	}
 	wrote, err := storeAvatar(ctx, db, avatars, listing.App.PubKey, pictureURL)
 	if err != nil {
-		rep.fail("avatar", err)
+		rep.degrade("avatar", err.Error())
 	} else if wrote {
 		rep.mark("avatar")
 	}
@@ -100,71 +97,44 @@ func imagesOne(ctx context.Context, db *artifacts.DB, data string, listing Listi
 	return rep.failed(), nil
 }
 
-// iconFetch is where the stored icon came from. fetched is false when the
-// stored bytes already matched. fallback is set when the listing URL failed
-// and the APK icon was stored instead.
-type iconFetch struct {
-	from     string
-	fetched  bool
-	fallback string
-}
-
-// fetchIcon tries the listing icon URL, then the APK. A database error is
-// returned as-is. A missing URL and a missing APK stores nothing.
-func fetchIcon(ctx context.Context, db *artifacts.DB, data string, in run.Input, stored artifacts.App) (iconFetch, error) {
-	url := strings.TrimSpace(in.IconURL)
-	apkHash := strings.TrimSpace(in.APKHash)
+// fetchIcon reads the icon from the APK, then from the listing's icon URL
+// when the APK has none. It returns where the icon came from, or iconNone
+// and the reason when neither has one. "" means nothing was done: the listing
+// has no APK, or the question is already settled. An APK that cannot be read
+// is an error.
+func fetchIcon(ctx context.Context, db *artifacts.DB, data string, in run.Input, stored artifacts.App) (from, note string, err error) {
 	has := len(stored.Icon) > 0
-	if url != "" && has && stored.Memo.Icon == url {
-		return iconFetch{from: url}, nil
-	}
-	if url == "" && apkHash != "" && has && stored.Memo.Icon == "apk" {
-		return iconFetch{from: "apk"}, nil
-	}
-	var urlErr error
-	if url != "" {
-		err := writeIconURL(ctx, db, in.AppID, stored.Icon, url)
-		if err == nil {
-			return iconFetch{from: url, fetched: true}, nil
-		}
-		urlErr = err
-	}
-	if apkHash == "" {
-		return iconFetch{}, urlErr
+	// settled is an icon this memo already explains. It is trusted only for
+	// the APK hash it came from: a new release can change the launcher icon,
+	// and rememberIcon does not advance Memo.APK, so a hash that still
+	// matches means the full enrich pipeline scanned this exact APK too.
+	settled := (stored.Memo.Icon == iconAPK || stored.Memo.Icon == iconListing) && stored.Memo.APK == in.APKHash
+	switch {
+	case strings.TrimSpace(in.APKHash) == "":
+		return "", "", nil
+	case has && settled:
+		return "", "", nil
+	case !has && stored.Memo.Icon == iconNone:
+		return "", "", nil
 	}
 	webp, err := iconFromListingAPK(ctx, data, in)
-	if err != nil || len(webp) == 0 {
-		if err == nil {
-			err = fmt.Errorf("apk has no icon")
+	if err != nil {
+		return "", "", err
+	}
+	from = iconAPK
+	if len(webp) == 0 {
+		from = iconListing
+		if strings.TrimSpace(in.IconURL) == "" {
+			return iconNone, "APK has no icon, listing has none", nil
 		}
-		if urlErr != nil {
-			return iconFetch{}, fmt.Errorf("%w; apk: %v", urlErr, err)
+		if webp, err = iconFromURL(ctx, in.IconURL); err != nil {
+			return iconNone, "APK has no icon, listing URL failed: " + err.Error(), nil
 		}
-		return iconFetch{}, err
 	}
 	if err := storeIcon(ctx, db, in.AppID, stored.Icon, webp); err != nil {
-		return iconFetch{}, err
+		return "", "", err
 	}
-	got := iconFetch{from: "apk", fetched: true}
-	if urlErr != nil {
-		got.fallback = urlErr.Error()
-	}
-	return got, nil
-}
-
-func writeIconURL(ctx context.Context, db *artifacts.DB, id string, prev []byte, url string) error {
-	raw, err := picture.Fetch(ctx, url)
-	if err != nil {
-		return err
-	}
-	webp, err := picture.Encode(raw, picture.Icon)
-	if err != nil {
-		return err
-	}
-	if len(webp) == 0 {
-		return fmt.Errorf("empty icon")
-	}
-	return storeIcon(ctx, db, id, prev, webp)
+	return from, "", nil
 }
 
 func iconFromListingAPK(ctx context.Context, data string, in run.Input) ([]byte, error) {

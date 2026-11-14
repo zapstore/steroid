@@ -1,7 +1,5 @@
 package catalog
 
-import "strings"
-
 // enrichVersion is the enrichment generation stored in each app cache.
 // Bump it when cached about, security, facts, or vectors should be redone.
 // It is also part of the model reply cache key and the stored tree names,
@@ -37,13 +35,13 @@ type observed struct {
 	HasIcon     bool
 	HasVector   bool
 	HasFacts    bool
-	IconURL     string
 }
 
 // work is what this run still has to do.
 // About follows the feature text. Security follows the scanner facts.
 // The vector follows the feature text. Clone runs when this run reads the repository.
-// Icon is set when the stored icon is missing or came from a different source.
+// Icon is set when the stored icon is missing, or did not come from the APK
+// and the APK is being scanned anyway.
 type work struct {
 	Clone    bool
 	Download bool
@@ -63,21 +61,30 @@ func plan(m memo, o observed) work {
 	w.About = o.Feature != m.Feature || !o.HasAbout
 	w.Security = !o.HasSecurity || o.Facts != m.Facts
 	w.Vector = o.Feature != m.Feature || !o.HasVector
-	source := iconSource(o.IconURL)
-	w.Icon = !o.HasIcon || m.Icon != source
-	w.Download = w.Scan || (w.Icon && source == "apk")
+	// An icon that is not from the current APK is looked at again only when
+	// the APK is scanned anyway, so the catalog moves over as apps change,
+	// not in one run. That covers both an icon from the listing, and one
+	// from an APK this memo no longer matches: a new release can change the
+	// launcher icon, so a stored iconAPK memo is only trusted for the APK
+	// hash it was set against. A settled "no icon" is not asked for again
+	// until then.
+	freshAPKIcon := m.Icon == iconAPK && o.APK == m.APK
+	w.Icon = (!o.HasIcon && m.Icon != iconNone) || (!freshAPKIcon && w.Scan)
+	w.Download = w.Scan || w.Icon
 	w.Clone = o.Repo && o.Commit != "" && (w.About || w.Security || (o.NeedReadme && m.Feature == ""))
 	return w
 }
 
-// iconSource is the listing icon URL, or apk when the listing has none.
-func iconSource(url string) string {
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return "apk"
-	}
-	return url
-}
+// Memo values for where the stored icon came from. The APK is tried first.
+// iconListing is the listing's icon URL, used when the APK has no icon.
+// iconNone is a finished search: neither had one, so nothing is stored and
+// nothing is asked again until the APK changes. Any other value is an icon
+// from an older build.
+const (
+	iconAPK     = "apk"
+	iconListing = "listing"
+	iconNone    = "none"
+)
 
 // stageDone says which stages finished. A stage that this run did not need counts as done.
 type stageDone struct {

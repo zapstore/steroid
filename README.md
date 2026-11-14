@@ -8,7 +8,7 @@ steroid [--debug] [--force] app_id
 steroid --images-only [--debug] [app_id]
 ```
 
-The app id selects listings whose id contains it. Omit it with `--images-only` to fetch every listing. Steroid writes about, security, the icon, and the search vector. `--debug` logs each step and writes `prompt` and `response.json` under `data/debug/<app-id>/`. `--force` deletes that app's row first, so the cache is not reused. `--images-only` fetches the listing icon and the author's picture and skips the model. The server writes the snapshot.
+The app id selects listings whose id contains it. Omit it with `--images-only` to fetch every listing. Steroid writes about, security, the icon, and the search vector. `--debug` logs each step and writes `prompt` and `response.json` under `data/debug/<app-id>/`. `--force` deletes that app's row first, so the cache is not reused. `--images-only` fetches the icon (from the APK, else the listing URL) and the author's picture and skips the model. The server writes the snapshot.
 
 ## Build
 
