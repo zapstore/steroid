@@ -13,16 +13,14 @@ The app id selects listings whose id contains it. Omit it with `--images-only` t
 ## Build
 
 ```
-make
+make build
 make linux-arm64
 make linux-amd64
 ```
 
-Needs CGO (`go-sqlite3`). The binary is `dist/steroid-<os>-<arch>`.
+Needs CGO (`go-sqlite3`). The binary is `dist/steroid-<os>-<arch>`. `make help` lists every target.
 
-At run time it needs `git` on `PATH`, and `git-remote-nostr` from ngit to
-clone a NIP-34 repository. A listing whose repository
-cannot be cloned is enriched without its source.
+At run time it needs `git` on `PATH`, and `git-remote-nostr` from ngit to clone a NIP-34 repository. A listing whose repository cannot be cloned is enriched without its source.
 
 ## About evals
 
