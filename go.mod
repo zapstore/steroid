@@ -6,7 +6,7 @@ require (
 	github.com/avast/apkparser v0.0.0-20251022140151-7294e274bf65
 	github.com/chai2010/webp v1.4.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/nbd-wtf/go-nostr v0.52.3
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
@@ -34,7 +34,6 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
